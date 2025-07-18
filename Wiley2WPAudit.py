@@ -16,6 +16,10 @@ import socket
 import hashlib
 import threading
 import time
+import base64
+import xml.etree.ElementTree as ET
+import re
+from urllib.parse import urlparse
 
 # --- Configuration ---
 LOCAL_BACKUP_DIR = Path("./backups")
@@ -27,1337 +31,1459 @@ LOCAL_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# A2 Hosting specific configuration
+# Enhanced A2 Hosting configuration with extensive troubleshooting
 A2_HOSTING_CONFIG = {
     'default_ports': {
         'secure': '2083',
         'non_secure': '2082'
     },
-    'softaculous_path': '/frontend/jupiter/softaculous/index.live.php',
-    'cpanel_themes': ['jupiter', 'paper_lantern'],
+    'softaculous_paths': [
+        '/frontend/jupiter/softaculous/index.live.php',
+        '/frontend/paper_lantern/softaculous/index.live.php',
+        '/frontend/x3/softaculous/index.live.php',
+        '/softaculous/index.php',
+        '/cpanel/softaculous/index.php',
+        '/frontend/jupiter/softaculous/',
+        '/frontend/jupiter/softaculous/index.php',
+        '/3rdparty/softaculous/index.php'
+    ],
+    'cpanel_paths': [
+        '/frontend/jupiter/',
+        '/frontend/paper_lantern/',
+        '/frontend/x3/',
+        '/cpanel/',
+        '/execute/',
+        '/json-api/'
+    ],
+    'api_formats': ['json', 'serialize', 'xml'],
     'known_servers': [
         'server.a2hosting.com',
         'nl1-ss*.a2hosting.com',
         'sg*.a2hosting.com',
-        'mi*.a2hosting.com'
+        'mi*.a2hosting.com',
+        'server.clasit.org'
     ],
-    'rate_limits': {
-        'api_calls_per_minute': 30,
-        'bulk_operations_delay': 2
-    }
+    'reseller_indicators': [
+        'clasit.org',
+        'hosting-provider.com',
+        'myreseller.com'
+    ]
 }
 
-# --- Audit Logging System ---
-class AuditLogger:
+# --- Enhanced Audit Logging System ---
+class EnhancedAuditLogger:
     def __init__(self):
         self.logs_dir = LOGS_DIR
         self.setup_loggers()
         
     def setup_loggers(self):
-        """Set up different loggers for different event types"""
+        """Set up comprehensive logging system"""
         today = datetime.datetime.now().strftime('%Y-%m-%d')
         
-        # Main audit logger
-        self.audit_logger = logging.getLogger('audit')
-        self.audit_logger.setLevel(logging.INFO)
-        audit_handler = logging.FileHandler(self.logs_dir / f"audit_{today}.log")
-        audit_formatter = logging.Formatter('%(message)s')
-        audit_handler.setFormatter(audit_formatter)
-        if not self.audit_logger.handlers:
-            self.audit_logger.addHandler(audit_handler)
+        # Diagnostic logger for API troubleshooting
+        self.diagnostic_logger = logging.getLogger('diagnostic')
+        self.diagnostic_logger.setLevel(logging.DEBUG)
+        diagnostic_handler = logging.FileHandler(self.logs_dir / f"diagnostic_{today}.log")
+        diagnostic_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        diagnostic_handler.setFormatter(diagnostic_formatter)
+        if not self.diagnostic_logger.handlers:
+            self.diagnostic_logger.addHandler(diagnostic_handler)
         
-        # Security events logger
-        self.security_logger = logging.getLogger('security')
-        self.security_logger.setLevel(logging.INFO)
-        security_handler = logging.FileHandler(self.logs_dir / "security_events.log")
-        security_formatter = logging.Formatter('%(message)s')
-        security_handler.setFormatter(security_formatter)
-        if not self.security_logger.handlers:
-            self.security_logger.addHandler(security_handler)
-        
-        # Bulk operations logger
-        self.bulk_logger = logging.getLogger('bulk_operations')
-        self.bulk_logger.setLevel(logging.INFO)
-        bulk_handler = logging.FileHandler(self.logs_dir / "bulk_operations.log")
-        bulk_formatter = logging.Formatter('%(message)s')
-        bulk_handler.setFormatter(bulk_formatter)
-        if not self.bulk_logger.handlers:
-            self.bulk_logger.addHandler(bulk_handler)
-        
-        # API calls logger
-        self.api_logger = logging.getLogger('api_calls')
-        self.api_logger.setLevel(logging.INFO)
-        api_handler = logging.FileHandler(self.logs_dir / "api_calls.log")
-        api_formatter = logging.Formatter('%(message)s')
+        # API calls logger with full request/response details
+        self.api_logger = logging.getLogger('api_detailed')
+        self.api_logger.setLevel(logging.DEBUG)
+        api_handler = logging.FileHandler(self.logs_dir / f"api_detailed_{today}.log")
+        api_formatter = logging.Formatter('%(asctime)s - %(message)s')
         api_handler.setFormatter(api_formatter)
         if not self.api_logger.handlers:
             self.api_logger.addHandler(api_handler)
     
-    def get_client_ip(self):
-        """Get client IP address"""
-        try:
-            if hasattr(st, 'context') and hasattr(st.context, 'headers'):
-                return st.context.headers.get('X-Forwarded-For', '127.0.0.1')
-            return '127.0.0.1'
-        except:
-            return '127.0.0.1'
-    
-    def get_session_id(self):
-        """Generate session ID"""
-        if 'session_id' not in st.session_state:
-            st.session_state.session_id = hashlib.md5(
-                f"{datetime.datetime.now().isoformat()}{self.get_client_ip()}".encode()
-            ).hexdigest()[:16]
-        return st.session_state.session_id
-    
-    def get_username(self):
-        """Get current username"""
-        if 'credentials' in st.session_state:
-            return st.session_state.credentials.get('user', 'unknown')
-        return 'anonymous'
-    
-    def log_auth_event(self, event_type, result, details=None):
-        """Log authentication events"""
+    def log_diagnostic(self, category, message, details=None):
+        """Log diagnostic information for troubleshooting"""
         log_entry = {
             'timestamp': datetime.datetime.now().isoformat(),
-            'event_type': 'AUTHENTICATION',
-            'action': event_type,
-            'username': self.get_username(),
-            'ip_address': self.get_client_ip(),
-            'session_id': self.get_session_id(),
-            'result': result,
+            'category': category,
+            'message': message,
             'details': details or {},
-            'risk_level': 'HIGH' if result == 'FAILURE' else 'LOW'
+            'session_id': st.session_state.get('session_id', 'unknown')
         }
-        
-        self.audit_logger.info(json.dumps(log_entry))
-        if result == 'FAILURE':
-            self.security_logger.info(json.dumps(log_entry))
+        self.diagnostic_logger.info(json.dumps(log_entry))
     
-    def log_site_access(self, site_name, action, result, details=None):
-        """Log site access events"""
+    def log_api_detailed(self, request_info, response_info, error_info=None):
+        """Log detailed API request/response information"""
         log_entry = {
             'timestamp': datetime.datetime.now().isoformat(),
-            'event_type': 'SITE_ACCESS',
-            'username': self.get_username(),
-            'ip_address': self.get_client_ip(),
-            'session_id': self.get_session_id(),
-            'site_name': site_name,
-            'action': action,
-            'result': result,
-            'details': details or {},
-            'risk_level': 'MEDIUM' if 'UPDATE' in action else 'LOW'
+            'request': request_info,
+            'response': response_info,
+            'error': error_info,
+            'session_id': st.session_state.get('session_id', 'unknown')
         }
-        
-        self.audit_logger.info(json.dumps(log_entry))
-        if result == 'FAILURE':
-            self.security_logger.info(json.dumps(log_entry))
-    
-    def log_bulk_operation(self, operation_type, site_count, results, details=None):
-        """Log bulk operations"""
-        log_entry = {
-            'timestamp': datetime.datetime.now().isoformat(),
-            'event_type': 'BULK_OPERATION',
-            'username': self.get_username(),
-            'ip_address': self.get_client_ip(),
-            'session_id': self.get_session_id(),
-            'operation': operation_type,
-            'sites_affected': site_count,
-            'success_count': len(results.get('success', [])),
-            'failure_count': len(results.get('errors', [])),
-            'details': details or {},
-            'risk_level': 'HIGH'
-        }
-        
-        self.audit_logger.info(json.dumps(log_entry))
-        self.bulk_logger.info(json.dumps(log_entry))
-        
-        if len(results.get('errors', [])) > site_count * 0.5:
-            self.security_logger.info(json.dumps({**log_entry, 'alert': 'HIGH_FAILURE_RATE'}))
-    
-    def log_api_call(self, endpoint, action, result, response_time=None, details=None):
-        """Log API calls"""
-        log_entry = {
-            'timestamp': datetime.datetime.now().isoformat(),
-            'event_type': 'API_CALL',
-            'username': self.get_username(),
-            'ip_address': self.get_client_ip(),
-            'session_id': self.get_session_id(),
-            'endpoint': endpoint,
-            'action': action,
-            'result': result,
-            'response_time': response_time,
-            'details': details or {},
-            'risk_level': 'MEDIUM' if result == 'FAILURE' else 'LOW'
-        }
-        
-        self.api_logger.info(json.dumps(log_entry))
-        if result == 'FAILURE':
-            self.security_logger.info(json.dumps(log_entry))
-    
-    def log_file_operation(self, operation_type, file_path, result, details=None):
-        """Log file operations"""
-        log_entry = {
-            'timestamp': datetime.datetime.now().isoformat(),
-            'event_type': 'FILE_OPERATION',
-            'username': self.get_username(),
-            'ip_address': self.get_client_ip(),
-            'session_id': self.get_session_id(),
-            'operation': operation_type,
-            'file_path': str(file_path),
-            'result': result,
-            'details': details or {},
-            'risk_level': 'LOW'
-        }
-        
-        self.audit_logger.info(json.dumps(log_entry))
-    
-    def log_export_operation(self, export_type, record_count, result, details=None):
-        """Log export operations"""
-        log_entry = {
-            'timestamp': datetime.datetime.now().isoformat(),
-            'event_type': 'EXPORT_OPERATION',
-            'username': self.get_username(),
-            'ip_address': self.get_client_ip(),
-            'session_id': self.get_session_id(),
-            'export_type': export_type,
-            'record_count': record_count,
-            'result': result,
-            'details': details or {},
-            'risk_level': 'MEDIUM'
-        }
-        
-        self.audit_logger.info(json.dumps(log_entry))
+        self.api_logger.debug(json.dumps(log_entry, indent=2))
 
-# Global audit logger instance
-audit_logger = AuditLogger()
+# Global enhanced audit logger
+enhanced_logger = EnhancedAuditLogger()
 
-# --- A2 Hosting Specific Functions ---
-def detect_a2_hosting_server(host):
-    """Detect if this is an A2 Hosting server (including reseller accounts)"""
-    a2_indicators = [
-        'a2hosting.com',
-        'server.a2hosting.com',
-        'nl1-ss',
-        'sg',
-        'mi',
-        'clasit.org',  # CLAS IT reseller
+# --- Comprehensive Server Analysis ---
+def analyze_server_configuration(host, port, user, password):
+    """Comprehensive analysis of server configuration and capabilities"""
+    st.write("🔍 **Starting comprehensive server analysis...**")
+    
+    analysis_results = {
+        'server_type': 'unknown',
+        'hosting_provider': 'unknown',
+        'cpanel_version': 'unknown',
+        'available_apis': [],
+        'working_paths': [],
+        'authentication_methods': [],
+        'ssl_info': {},
+        'response_formats': [],
+        'errors': []
+    }
+    
+    # 1. Basic connectivity test
+    st.write("📡 **Testing basic connectivity...**")
+    connectivity_result = test_basic_connectivity(host, port)
+    analysis_results['connectivity'] = connectivity_result
+    
+    if not connectivity_result['success']:
+        st.error(f"❌ Basic connectivity failed: {connectivity_result['error']}")
+        return analysis_results
+    
+    st.success("✅ Basic connectivity successful")
+    
+    # 2. SSL/Certificate analysis
+    st.write("🔒 **Analyzing SSL configuration...**")
+    ssl_info = analyze_ssl_configuration(host, port)
+    analysis_results['ssl_info'] = ssl_info
+    
+    # 3. Server identification
+    st.write("🏢 **Identifying hosting provider and server type...**")
+    server_info = identify_hosting_provider(host)
+    analysis_results.update(server_info)
+    
+    # 4. cPanel detection and version
+    st.write("🖥️ **Detecting cPanel version and theme...**")
+    cpanel_info = detect_cpanel_configuration(host, port, user, password)
+    analysis_results.update(cpanel_info)
+    
+    # 5. API endpoint discovery
+    st.write("🔍 **Discovering available API endpoints...**")
+    api_endpoints = discover_api_endpoints(host, port, user, password)
+    analysis_results['available_apis'] = api_endpoints
+    
+    # 6. Authentication method testing
+    st.write("🔐 **Testing authentication methods...**")
+    auth_methods = test_authentication_methods(host, port, user, password)
+    analysis_results['authentication_methods'] = auth_methods
+    
+    # 7. Softaculous detection
+    st.write("⚙️ **Detecting Softaculous installation and configuration...**")
+    softaculous_info = detect_softaculous_configuration(host, port, user, password)
+    analysis_results['softaculous'] = softaculous_info
+    
+    # Log comprehensive analysis
+    enhanced_logger.log_diagnostic('SERVER_ANALYSIS', 'Complete server analysis', analysis_results)
+    
+    return analysis_results
+
+def test_basic_connectivity(host, port):
+    """Test basic network connectivity to the server"""
+    try:
+        # Test socket connection
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        result = sock.connect_ex((host, int(port)))
+        sock.close()
+        
+        if result == 0:
+            return {'success': True, 'method': 'socket'}
+        else:
+            return {'success': False, 'error': f'Socket connection failed (code: {result})'}
+    
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+def analyze_ssl_configuration(host, port):
+    """Analyze SSL certificate and configuration"""
+    ssl_info = {}
+    
+    try:
+        import ssl
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        
+        with socket.create_connection((host, int(port)), timeout=10) as sock:
+            with context.wrap_socket(sock, server_hostname=host) as ssock:
+                cert = ssock.getpeercert()
+                ssl_info = {
+                    'version': ssock.version(),
+                    'cipher': ssock.cipher(),
+                    'certificate': {
+                        'subject': dict(x[0] for x in cert.get('subject', [])),
+                        'issuer': dict(x[0] for x in cert.get('issuer', [])),
+                        'version': cert.get('version'),
+                        'serial_number': cert.get('serialNumber'),
+                        'not_before': cert.get('notBefore'),
+                        'not_after': cert.get('notAfter')
+                    }
+                }
+    
+    except Exception as e:
+        ssl_info = {'error': str(e), 'self_signed': True}
+    
+    return ssl_info
+
+def identify_hosting_provider(host):
+    """Identify hosting provider and server characteristics"""
+    host_lower = host.lower()
+    
+    provider_info = {
+        'hosting_provider': 'unknown',
+        'server_type': 'unknown',
+        'location': 'unknown',
+        'is_reseller': False,
+        'reseller_info': {}
+    }
+    
+    # A2 Hosting detection
+    if 'a2hosting.com' in host_lower:
+        provider_info['hosting_provider'] = 'A2 Hosting'
+        if 'nl1-ss' in host_lower:
+            provider_info['location'] = 'Netherlands'
+            provider_info['server_type'] = 'Shared'
+        elif 'sg' in host_lower:
+            provider_info['location'] = 'Singapore'
+            provider_info['server_type'] = 'Shared'
+        elif 'mi' in host_lower:
+            provider_info['location'] = 'Michigan, USA'
+            provider_info['server_type'] = 'Shared'
+        elif 'server.a2hosting.com' in host_lower:
+            provider_info['server_type'] = 'VPS/Dedicated'
+    
+    # Reseller detection
+    elif 'clasit.org' in host_lower:
+        provider_info['hosting_provider'] = 'A2 Hosting Reseller'
+        provider_info['is_reseller'] = True
+        provider_info['reseller_info'] = {
+            'reseller_name': 'CLAS IT',
+            'parent_provider': 'A2 Hosting'
+        }
+    
+    # Generic reseller patterns
+    elif any(indicator in host_lower for indicator in ['hosting', 'server', 'cpanel']):
+        provider_info['hosting_provider'] = 'Possible Reseller'
+        provider_info['is_reseller'] = True
+    
+    return provider_info
+
+def detect_cpanel_configuration(host, port, user, password):
+    """Detect cPanel version, theme, and configuration"""
+    cpanel_info = {
+        'version': 'unknown',
+        'theme': 'unknown',
+        'available_themes': [],
+        'working_paths': []
+    }
+    
+    # Test common cPanel paths
+    test_paths = [
+        '/cpanel',
+        '/frontend/jupiter/',
+        '/frontend/paper_lantern/',
+        '/frontend/x3/',
+        '/'
     ]
     
-    for indicator in a2_indicators:
-        if indicator in host.lower():
-            return True, get_a2_server_info(host)
-    
-    return False, None
-
-def get_a2_server_info(host):
-    """Get information about A2 Hosting server location and type"""
-    server_info = {
-        'provider': 'A2 Hosting',
-        'location': 'Unknown',
-        'server_type': 'Shared/VPS'
-    }
-    
-    if 'nl1-ss' in host.lower():
-        server_info['location'] = 'Netherlands (Amsterdam)'
-        server_info['server_type'] = 'Shared'
-    elif 'sg' in host.lower():
-        server_info['location'] = 'Singapore'
-        server_info['server_type'] = 'Shared'
-    elif 'mi' in host.lower():
-        server_info['location'] = 'Michigan (USA)'
-        server_info['server_type'] = 'Shared'
-    elif 'server.a2hosting.com' in host.lower():
-        server_info['location'] = 'USA (Primary)'
-        server_info['server_type'] = 'VPS/Dedicated'
-    elif 'clasit.org' in host.lower():
-        server_info['location'] = 'USA (A2 Hosting Reseller - CLAS IT)'
-        server_info['server_type'] = 'Reseller Account'
-        server_info['reseller'] = 'CLAS IT'
-    
-    return server_info
-
-def validate_a2_credentials(host, user, password, port):
-    """Validate A2 Hosting credentials (including reseller accounts)"""
-    errors = []
-    
-    # A2 Hosting (including resellers) host validation
-    a2_domains = ['.a2hosting.com', 'server.a2hosting.com', 'clasit.org']
-    is_a2_host = any(domain in host.lower() for domain in a2_domains)
-    
-    if not is_a2_host:
-        errors.append("Host should be an A2 Hosting server (*.a2hosting.com) or A2 reseller (e.g., clasit.org)")
-    
-    # A2 typically has specific username formats
-    if len(user) < 3:
-        errors.append("A2 Hosting usernames are typically at least 3 characters")
-    
-    # A2 password requirements
-    if len(password) < 6:
-        errors.append("A2 Hosting passwords should be at least 6 characters")
-    
-    return errors
-
-def test_a2_cpanel_connection(host, port, user, password):
-    """Test A2 Hosting cPanel connection with specific error handling"""
-    try:
-        base_url = f"https://{user}:{password}@{host}:{port}/frontend/jupiter/softaculous/index.live.php"
-        params = {'act': 'home', 'api': 'json'}
-        
-        response = requests.get(
-            base_url, 
-            params=params, 
-            verify=False,  # A2 may use self-signed certs
-            timeout=30,    # A2 servers can be slow
-            headers={'User-Agent': 'A2-WordPress-Manager/1.0'}
-        )
-        
-        if response.status_code == 200:
-            return True
-        elif response.status_code == 401:
-            audit_logger.log_auth_event('A2_LOGIN', 'FAILURE', 
-                                      details={'error': 'Invalid credentials'})
-            return False
-        elif response.status_code == 403:
-            audit_logger.log_auth_event('A2_LOGIN', 'FAILURE', 
-                                      details={'error': 'IP blocked or access denied'})
-            return False
-        else:
-            audit_logger.log_auth_event('A2_LOGIN', 'FAILURE', 
-                                      details={'error': f'HTTP {response.status_code}'})
-            return False
+    for path in test_paths:
+        try:
+            url = f"https://{host}:{port}{path}"
+            response = requests.get(
+                url,
+                auth=(user, password),
+                verify=False,
+                timeout=10,
+                allow_redirects=True
+            )
             
-    except requests.exceptions.ConnectTimeout:
-        audit_logger.log_auth_event('A2_LOGIN', 'FAILURE', 
-                                  details={'error': 'Connection timeout - A2 server may be slow'})
-        return False
-    except requests.exceptions.SSLError:
-        audit_logger.log_auth_event('A2_LOGIN', 'FAILURE', 
-                                  details={'error': 'SSL certificate error'})
-        return False
-    except Exception as e:
-        audit_logger.log_auth_event('A2_LOGIN', 'FAILURE', 
-                                  details={'error': str(e)})
-        return False
+            if response.status_code == 200:
+                cpanel_info['working_paths'].append(path)
+                
+                # Extract cPanel version and theme from response
+                content = response.text.lower()
+                
+                # Look for cPanel version
+                version_patterns = [
+                    r'cpanel[^\d]*(\d+\.\d+[\.\d]*)',
+                    r'version[^\d]*(\d+\.\d+[\.\d]*)',
+                    r'cpanel_magic_revision_(\d+)'
+                ]
+                
+                for pattern in version_patterns:
+                    match = re.search(pattern, content)
+                    if match:
+                        cpanel_info['version'] = match.group(1)
+                        break
+                
+                # Detect theme
+                if 'jupiter' in content:
+                    cpanel_info['theme'] = 'jupiter'
+                elif 'paper_lantern' in content:
+                    cpanel_info['theme'] = 'paper_lantern'
+                elif 'x3' in content:
+                    cpanel_info['theme'] = 'x3'
+                
+                # Look for available themes
+                theme_patterns = ['jupiter', 'paper_lantern', 'x3', 'retro']
+                for theme in theme_patterns:
+                    if theme in content and theme not in cpanel_info['available_themes']:
+                        cpanel_info['available_themes'].append(theme)
+        
+        except Exception as e:
+            enhanced_logger.log_diagnostic('CPANEL_DETECTION', f'Path {path} failed', {'error': str(e)})
+            continue
+    
+    return cpanel_info
 
-def handle_a2_hosting_errors(error_message):
-    """Handle A2 Hosting specific error messages"""
-    a2_error_solutions = {
-        'timeout': {
-            'message': 'A2 Hosting server timeout',
-            'solution': 'A2 servers can be slow during peak hours. Try again in a few minutes.',
-            'action': 'Reduce batch sizes or schedule operations during off-peak hours'
-        },
-        'ssl': {
-            'message': 'SSL certificate error',
-            'solution': 'A2 Hosting uses self-signed certificates on some servers.',
-            'action': 'This is normal and handled automatically by the tool'
-        },
-        '401': {
-            'message': 'Authentication failed',
-            'solution': 'Check your cPanel credentials in the A2 Hosting client area.',
-            'action': 'Verify username and password, or reset cPanel password'
-        },
-        '403': {
-            'message': 'Access denied',
-            'solution': 'A2 Hosting firewall may be blocking the request.',
-            'action': 'Contact A2 support to whitelist your IP address'
-        },
-        'rate_limit': {
-            'message': 'Too many requests',
-            'solution': 'A2 Hosting is throttling API calls.',
-            'action': 'Enable rate limiting and reduce operation frequency'
+def discover_api_endpoints(host, port, user, password):
+    """Discover available API endpoints and their capabilities"""
+    api_endpoints = []
+    
+    # Test various API endpoints
+    endpoints_to_test = [
+        # Softaculous endpoints
+        {'path': '/frontend/jupiter/softaculous/index.live.php', 'type': 'softaculous', 'method': 'GET'},
+        {'path': '/frontend/paper_lantern/softaculous/index.live.php', 'type': 'softaculous', 'method': 'GET'},
+        {'path': '/softaculous/index.php', 'type': 'softaculous', 'method': 'GET'},
+        
+        # cPanel API endpoints
+        {'path': '/execute/Fileman/list_files', 'type': 'cpanel_uapi', 'method': 'GET'},
+        {'path': '/json-api/cpanel', 'type': 'cpanel_json', 'method': 'GET'},
+        {'path': '/frontend/jupiter/filemanager/', 'type': 'file_manager', 'method': 'GET'},
+        
+        # WordPress specific
+        {'path': '/wp-admin/', 'type': 'wordpress', 'method': 'GET'},
+        {'path': '/xmlrpc.php', 'type': 'wordpress_xmlrpc', 'method': 'POST'}
+    ]
+    
+    for endpoint in endpoints_to_test:
+        try:
+            url = f"https://{host}:{port}{endpoint['path']}"
+            
+            if endpoint['method'] == 'GET':
+                response = requests.get(
+                    url,
+                    auth=(user, password),
+                    verify=False,
+                    timeout=10
+                )
+            else:
+                response = requests.post(
+                    url,
+                    auth=(user, password),
+                    verify=False,
+                    timeout=10
+                )
+            
+            endpoint_info = {
+                'path': endpoint['path'],
+                'type': endpoint['type'],
+                'status_code': response.status_code,
+                'content_type': response.headers.get('content-type', ''),
+                'accessible': response.status_code in [200, 401, 403],  # 401/403 means exists but needs auth
+                'response_size': len(response.content)
+            }
+            
+            # Analyze response content
+            if response.status_code == 200:
+                content = response.text.lower()
+                endpoint_info['contains_html'] = 'html' in content
+                endpoint_info['contains_json'] = content.strip().startswith('{')
+                endpoint_info['contains_xml'] = content.strip().startswith('<') and 'xml' in content
+                endpoint_info['softaculous_detected'] = 'softaculous' in content
+                endpoint_info['wordpress_detected'] = 'wordpress' in content or 'wp-' in content
+            
+            api_endpoints.append(endpoint_info)
+            
+        except Exception as e:
+            api_endpoints.append({
+                'path': endpoint['path'],
+                'type': endpoint['type'],
+                'error': str(e),
+                'accessible': False
+            })
+    
+    return api_endpoints
+
+def test_authentication_methods(host, port, user, password):
+    """Test different authentication methods"""
+    auth_methods = []
+    
+    test_url = f"https://{host}:{port}/frontend/jupiter/"
+    
+    # 1. HTTP Basic Auth
+    try:
+        response = requests.get(
+            test_url,
+            auth=(user, password),
+            verify=False,
+            timeout=10
+        )
+        auth_methods.append({
+            'method': 'HTTP Basic Auth',
+            'status_code': response.status_code,
+            'working': response.status_code in [200, 302],
+            'headers': dict(response.headers)
+        })
+    except Exception as e:
+        auth_methods.append({
+            'method': 'HTTP Basic Auth',
+            'error': str(e),
+            'working': False
+        })
+    
+    # 2. URL-embedded credentials
+    try:
+        url_with_creds = f"https://{user}:{password}@{host}:{port}/frontend/jupiter/"
+        response = requests.get(
+            url_with_creds,
+            verify=False,
+            timeout=10
+        )
+        auth_methods.append({
+            'method': 'URL-embedded credentials',
+            'status_code': response.status_code,
+            'working': response.status_code in [200, 302],
+            'headers': dict(response.headers)
+        })
+    except Exception as e:
+        auth_methods.append({
+            'method': 'URL-embedded credentials',
+            'error': str(e),
+            'working': False
+        })
+    
+    # 3. Authorization header
+    try:
+        headers = {
+            'Authorization': f'Basic {base64.b64encode(f"{user}:{password}".encode()).decode()}'
         }
+        response = requests.get(
+            test_url,
+            headers=headers,
+            verify=False,
+            timeout=10
+        )
+        auth_methods.append({
+            'method': 'Authorization header',
+            'status_code': response.status_code,
+            'working': response.status_code in [200, 302],
+            'headers': dict(response.headers)
+        })
+    except Exception as e:
+        auth_methods.append({
+            'method': 'Authorization header',
+            'error': str(e),
+            'working': False
+        })
+    
+    return auth_methods
+
+def detect_softaculous_configuration(host, port, user, password):
+    """Detect Softaculous installation and configuration"""
+    softaculous_info = {
+        'installed': False,
+        'version': 'unknown',
+        'accessible_paths': [],
+        'supported_apis': [],
+        'wordpress_support': False
     }
     
-    error_lower = error_message.lower()
+    # Test Softaculous paths
+    softaculous_paths = A2_HOSTING_CONFIG['softaculous_paths']
     
-    for error_type, info in a2_error_solutions.items():
-        if error_type in error_lower:
-            st.error(f"🚨 **{info['message']}**")
-            st.info(f"💡 **Solution:** {info['solution']}")
-            st.success(f"🔧 **Action:** {info['action']}")
-            return True
+    for path in softaculous_paths:
+        try:
+            # Test different API formats
+            for api_format in ['json', 'serialize', 'xml']:
+                url = f"https://{host}:{port}{path}"
+                params = {'act': 'home', 'api': api_format}
+                
+                response = requests.get(
+                    url,
+                    params=params,
+                    auth=(user, password),
+                    verify=False,
+                    timeout=15
+                )
+                
+                if response.status_code == 200:
+                    content_type = response.headers.get('content-type', '').lower()
+                    
+                    # Check if we got API data instead of HTML
+                    if 'text/html' not in content_type or not response.text.strip().startswith('<!DOCTYPE'):
+                        softaculous_info['installed'] = True
+                        softaculous_info['accessible_paths'].append(path)
+                        softaculous_info['supported_apis'].append(api_format)
+                        
+                        # Try to parse version and capabilities
+                        try:
+                            if api_format == 'json':
+                                data = json.loads(response.text)
+                                if 'version' in data:
+                                    softaculous_info['version'] = data['version']
+                                if 'wordpress' in str(data).lower():
+                                    softaculous_info['wordpress_support'] = True
+                            
+                            elif api_format == 'serialize':
+                                try:
+                                    import phpserialize
+                                    data = phpserialize.loads(response.content)
+                                    if isinstance(data, dict):
+                                        if b'version' in data or 'version' in data:
+                                            softaculous_info['version'] = str(data.get('version', data.get(b'version', 'unknown')))
+                                        if b'wordpress' in str(data).lower().encode() or 'wordpress' in str(data).lower():
+                                            softaculous_info['wordpress_support'] = True
+                                except ImportError:
+                                    st.warning("⚠️ phpserialize library not available - some API formats may not work")
+                        
+                        except Exception as parse_error:
+                            enhanced_logger.log_diagnostic('SOFTACULOUS_PARSE', f'Parse error for {api_format}', {'error': str(parse_error)})
+                    
+                    # Log the response for analysis
+                    enhanced_logger.log_api_detailed(
+                        {'url': url, 'params': params, 'auth_method': 'basic'},
+                        {'status_code': response.status_code, 'content_type': content_type, 'size': len(response.content)},
+                        None if response.status_code == 200 else 'Non-200 status'
+                    )
+        
+        except Exception as e:
+            enhanced_logger.log_diagnostic('SOFTACULOUS_TEST', f'Path {path} failed', {'error': str(e)})
+            continue
     
-    return False
+    return softaculous_info
 
-# --- Softaculous API Functions ---
-def make_softaculous_request(act, post_data=None, additional_params=None):
-    """Make authenticated request to Softaculous API optimized for A2 Hosting"""
+# --- Enhanced Softaculous API Functions ---
+def make_enhanced_softaculous_request(act, post_data=None, additional_params=None):
+    """
+    Enhanced Softaculous API request with comprehensive diagnostics and fallbacks
+    """
     start_time = datetime.datetime.now()
     
-    # Get credentials from session state
     if 'credentials' not in st.session_state:
-        audit_logger.log_api_call('softaculous', act, 'FAILURE', 
-                                details={'error': 'No credentials available'})
         return None, "Not authenticated"
     
     creds = st.session_state.credentials
     
-    # A2 Hosting specific rate limiting
+    # Rate limiting
     if creds.get('rate_limits', True):
         if 'last_api_call' in st.session_state:
             time_since_last = (datetime.datetime.now() - st.session_state.last_api_call).total_seconds()
-            if time_since_last < 2:  # Wait at least 2 seconds between calls
+            if time_since_last < 2:
                 time.sleep(2 - time_since_last)
-        
         st.session_state.last_api_call = datetime.datetime.now()
     
-    softaculous_path = "/frontend/jupiter/softaculous/index.live.php"
+    # Get server analysis if available
+    server_analysis = st.session_state.get('server_analysis', {})
     
-    base_url = f"https://{creds['user']}:{creds['pass']}@{creds['host']}:{creds['port']}{softaculous_path}"
+    # Use discovered working paths if available
+    if server_analysis.get('softaculous', {}).get('accessible_paths'):
+        paths_to_try = server_analysis['softaculous']['accessible_paths']
+    else:
+        paths_to_try = A2_HOSTING_CONFIG['softaculous_paths']
     
-    params = {
-        'act': act,
-        'api': 'serialize'
-    }
+    # Use discovered working API formats if available
+    if server_analysis.get('softaculous', {}).get('supported_apis'):
+        api_formats_to_try = server_analysis['softaculous']['supported_apis']
+    else:
+        api_formats_to_try = A2_HOSTING_CONFIG['api_formats']
     
-    if additional_params:
-        params.update(additional_params)
+    # Use discovered working auth methods if available
+    working_auth_methods = [method for method in server_analysis.get('authentication_methods', []) if method.get('working')]
     
-    # A2 Hosting specific headers
-    headers = {
-        'User-Agent': 'A2-WordPress-Manager/1.0',
-        'Accept': 'application/json, text/plain, */*',
-        'Cache-Control': 'no-cache'
-    }
-    
-    try:
-        # Show debug info in dev mode
-        if st.session_state.get('debug_mode', False):
-            st.write(f"🔍 **Debug**: Making request to {act}")
-            st.write(f"📍 **URL**: {base_url}")
-            st.write(f"🔧 **Params**: {params}")
-        
-        if post_data:
-            response = requests.post(
-                base_url, 
-                params=params, 
-                data=post_data,
-                headers=headers,
-                verify=False,  # A2 may use self-signed certs
-                timeout=60     # A2 operations can be slow
-            )
-        else:
-            response = requests.get(
-                base_url, 
-                params=params,
-                headers=headers,
-                verify=False,
-                timeout=60
-            )
-        
-        response_time = (datetime.datetime.now() - start_time).total_seconds()
-        
-        if st.session_state.get('debug_mode', False):
-            st.write(f"📊 **Response Status**: {response.status_code}")
-            st.write(f"⏱️ **Response Time**: {response_time:.2f}s")
-        
-        if response.status_code == 200:
-            # Parse serialized PHP response
-            import phpserialize
-            try:
-                result = phpserialize.loads(response.content)
+    for path_index, softaculous_path in enumerate(paths_to_try):
+        for format_index, api_format in enumerate(api_formats_to_try):
+            for auth_index, auth_method in enumerate(['basic', 'url', 'header']):
                 
+                # Prepare URL and authentication
+                if auth_method == 'url':
+                    base_url = f"https://{creds['user']}:{creds['pass']}@{creds['host']}:{creds['port']}{softaculous_path}"
+                    auth = None
+                    headers = {'User-Agent': 'A2-WordPress-Manager/2.0'}
+                else:
+                    base_url = f"https://{creds['host']}:{creds['port']}{softaculous_path}"
+                    auth = (creds['user'], creds['pass'])
+                    headers = {'User-Agent': 'A2-WordPress-Manager/2.0'}
+                    
+                    if auth_method == 'header':
+                        headers['Authorization'] = f'Basic {base64.b64encode(f"{creds["user"]}:{creds["pass"]}".encode()).decode()}'
+                        auth = None
+                
+                # Prepare parameters
+                params = {
+                    'act': act,
+                    'api': api_format
+                }
+                
+                if additional_params:
+                    params.update(additional_params)
+                
+                # Add debug information
                 if st.session_state.get('debug_mode', False):
-                    st.write(f"✅ **Parsed Result**: {type(result)}")
-                    if isinstance(result, dict):
-                        st.write(f"📋 **Keys**: {list(result.keys())}")
+                    st.write(f"🔍 **Attempt {path_index+1}.{format_index+1}.{auth_index+1}**: Path: `{softaculous_path}`, Format: `{api_format}`, Auth: `{auth_method}`")
                 
-                audit_logger.log_api_call('a2_softaculous', act, 'SUCCESS', 
-                                        response_time=response_time,
-                                        details={'params': params, 'response_size': len(response.content)})
-                return result, None
-            except Exception as parse_error:
-                if st.session_state.get('debug_mode', False):
-                    st.write(f"❌ **Parse Error**: {str(parse_error)}")
-                    st.write(f"📄 **Raw Response**: {response.content[:500]}...")
+                try:
+                    # Make the request
+                    if post_data:
+                        response = requests.post(
+                            base_url,
+                            params=params,
+                            data=post_data,
+                            headers=headers,
+                            auth=auth,
+                            verify=False,
+                            timeout=60
+                        )
+                    else:
+                        response = requests.get(
+                            base_url,
+                            params=params,
+                            headers=headers,
+                            auth=auth,
+                            verify=False,
+                            timeout=60
+                        )
+                    
+                    response_time = (datetime.datetime.now() - start_time).total_seconds()
+                    
+                    # Log detailed request/response
+                    request_info = {
+                        'url': base_url,
+                        'params': params,
+                        'auth_method': auth_method,
+                        'headers': headers,
+                        'post_data': bool(post_data)
+                    }
+                    
+                    response_info = {
+                        'status_code': response.status_code,
+                        'headers': dict(response.headers),
+                        'content_type': response.headers.get('content-type', ''),
+                        'content_length': len(response.content),
+                        'response_time': response_time
+                    }
+                    
+                    if st.session_state.get('debug_mode', False):
+                        st.write(f"📊 **Status**: {response.status_code}, **Time**: {response_time:.2f}s, **Size**: {len(response.content)} bytes")
+                        st.write(f"📋 **Content-Type**: {response.headers.get('content-type', 'Unknown')}")
+                    
+                    if response.status_code == 200:
+                        # Check if we got HTML (login page) instead of API data
+                        content_type = response.headers.get('content-type', '').lower()
+                        response_text = response.content.decode('utf-8', errors='ignore')
+                        
+                        # Detailed content analysis
+                        is_html = ('text/html' in content_type or 
+                                 response_text.strip().startswith('<!DOCTYPE') or
+                                 response_text.strip().startswith('<html'))
+                        
+                        if is_html:
+                            if st.session_state.get('debug_mode', False):
+                                st.write(f"❌ **Got HTML instead of API data**")
+                                # Show first 500 chars of HTML for analysis
+                                st.code(response_text[:500] + "..." if len(response_text) > 500 else response_text)
+                            
+                            enhanced_logger.log_api_detailed(request_info, response_info, 'HTML_RESPONSE_INSTEAD_OF_API')
+                            continue  # Try next combination
+                        
+                        # Try to parse based on API format
+                        try:
+                            if api_format == 'json':
+                                # Try to find JSON in response
+                                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                                if json_match:
+                                    result = json.loads(json_match.group())
+                                else:
+                                    result = json.loads(response_text)
+                            
+                            elif api_format == 'serialize':
+                                try:
+                                    import phpserialize
+                                    result = phpserialize.loads(response.content)
+                                except ImportError:
+                                    if st.session_state.get('debug_mode', False):
+                                        st.error("❌ **phpserialize library not available**")
+                                    continue
+                            
+                            elif api_format == 'xml':
+                                result = ET.fromstring(response_text)
+                            
+                            else:
+                                result = response_text
+                            
+                            # Success!
+                            if st.session_state.get('debug_mode', False):
+                                st.success(f"✅ **SUCCESS!** Path: `{softaculous_path}`, Format: `{api_format}`, Auth: `{auth_method}`")
+                                st.write(f"📋 **Result type**: {type(result)}")
+                                if isinstance(result, dict):
+                                    st.write(f"🔑 **Keys**: {list(result.keys())[:10]}...")  # Show first 10 keys
+                            
+                            enhanced_logger.log_api_detailed(request_info, response_info, None)
+                            
+                            # Store working configuration for future use
+                            st.session_state.working_api_config = {
+                                'path': softaculous_path,
+                                'format': api_format,
+                                'auth_method': auth_method
+                            }
+                            
+                            return result, None
+                        
+                        except Exception as parse_error:
+                            if st.session_state.get('debug_mode', False):
+                                st.write(f"❌ **Parse Error**: {str(parse_error)}")
+                                st.code(response_text[:300] + "..." if len(response_text) > 300 else response_text)
+                            
+                            enhanced_logger.log_api_detailed(request_info, response_info, f'PARSE_ERROR: {str(parse_error)}')
+                            continue
+                    
+                    else:
+                        if st.session_state.get('debug_mode', False):
+                            st.write(f"❌ **HTTP {response.status_code}**")
+                        
+                        enhanced_logger.log_api_detailed(request_info, response_info, f'HTTP_{response.status_code}')
+                        
+                        # If it's a client error, don't try other auth methods for this path/format
+                        if 400 <= response.status_code < 500:
+                            break
                 
-                audit_logger.log_api_call('a2_softaculous', act, 'FAILURE', 
-                                        response_time=response_time,
-                                        details={'error': f'Parse error: {str(parse_error)}'})
-                return None, f"Failed to parse A2 Softaculous response: {str(parse_error)}"
-        else:
-            audit_logger.log_api_call('a2_softaculous', act, 'FAILURE', 
-                                    response_time=response_time,
-                                    details={'status_code': response.status_code, 'error': response.text})
-            return None, f"A2 Hosting API Error - HTTP {response.status_code}: {response.text}"
+                except Exception as e:
+                    if st.session_state.get('debug_mode', False):
+                        st.write(f"❌ **Connection Error**: {str(e)}")
+                    
+                    enhanced_logger.log_diagnostic('API_CONNECTION_ERROR', str(e), {
+                        'path': softaculous_path,
+                        'format': api_format,
+                        'auth_method': auth_method
+                    })
+                    continue
     
-    except requests.exceptions.Timeout:
-        response_time = (datetime.datetime.now() - start_time).total_seconds()
-        audit_logger.log_api_call('a2_softaculous', act, 'FAILURE', 
-                                response_time=response_time,
-                                details={'error': 'Request timeout - A2 server slow'})
-        return None, "Request timeout - A2 Hosting server may be experiencing high load"
+    # If we get here, all combinations failed
+    total_attempts = len(paths_to_try) * len(api_formats_to_try) * 3  # 3 auth methods
+    error_message = f"All {total_attempts} API combinations failed. Server may have custom Softaculous configuration."
     
-    except Exception as e:
-        response_time = (datetime.datetime.now() - start_time).total_seconds()
-        audit_logger.log_api_call('a2_softaculous', act, 'FAILURE', 
-                                response_time=response_time,
-                                details={'error': str(e)})
-        return None, f"A2 Hosting connection error: {str(e)}"
+    enhanced_logger.log_diagnostic('API_EXHAUSTED', error_message, {
+        'paths_tried': paths_to_try,
+        'formats_tried': api_formats_to_try,
+        'total_attempts': total_attempts
+    })
+    
+    return None, error_message
 
-def list_wordpress_installations():
-    """List all WordPress installations with enhanced debugging"""
-    # Try different API endpoints that might work
+def enhanced_wordpress_discovery():
+    """Enhanced WordPress discovery with comprehensive fallback methods"""
+    
+    st.write("🔍 **Starting enhanced WordPress discovery...**")
+    
+    # Method 1: Enhanced Softaculous API
+    st.write("📡 **Method 1: Enhanced Softaculous API**")
+    installations = try_softaculous_discovery()
+    if installations:
+        st.success(f"✅ Found {len(installations)} WordPress installations via Softaculous API")
+        return installations, None
+    
+    # Method 2: cPanel File Manager API
+    st.write("📁 **Method 2: cPanel File Manager API**")
+    installations = try_cpanel_file_discovery()
+    if installations:
+        st.success(f"✅ Found {len(installations)} WordPress installations via cPanel API")
+        return installations, None
+    
+    # Method 3: Direct file system scanning (if accessible)
+    st.write("🔍 **Method 3: Direct file system scanning**")
+    installations = try_direct_file_scanning()
+    if installations:
+        st.success(f"✅ Found {len(installations)} WordPress installations via file scanning")
+        return installations, None
+    
+    # Method 4: WordPress database detection
+    st.write("💾 **Method 4: Database-based detection**")
+    installations = try_database_detection()
+    if installations:
+        st.success(f"✅ Found {len(installations)} WordPress installations via database detection")
+        return installations, None
+    
+    # Method 5: Manual discovery assistance
+    st.write("🔧 **Method 5: Manual discovery assistance**")
+    show_manual_discovery_assistant()
+    
+    return [], "Automated discovery methods exhausted. Please use manual discovery assistant."
+
+def try_softaculous_discovery():
+    """Try to discover WordPress installations via Softaculous API"""
     endpoints_to_try = [
         ('wordpress', {}),
-        ('software', {'softwareid': '26'}),  # WordPress is usually ID 26
-        ('list', {'software': 'wordpress'}),
-        ('installations', {'type': 'wordpress'}),
+        ('software', {'softwareid': '26'}),
+        ('installations', {}),
+        ('list', {}),
+        ('home', {}),
+        ('software', {'software': 'wordpress'}),
+        ('list', {'type': 'wordpress'}),
+        ('apps', {}),
     ]
     
     for act, extra_params in endpoints_to_try:
         if st.session_state.get('debug_mode', False):
-            st.write(f"🔍 **Trying endpoint**: {act} with params: {extra_params}")
+            st.write(f"🔍 **Trying Softaculous endpoint**: `{act}` with params: `{extra_params}`")
         
-        result, error = make_softaculous_request(act, additional_params=extra_params)
+        result, error = make_enhanced_softaculous_request(act, additional_params=extra_params)
         
         if not error and result:
-            # Try to find installations in different possible locations
-            installations = []
+            installations = extract_installations_from_result(result)
+            if installations:
+                return installations
             
-            # Check different possible response structures
-            possible_keys = ['installations', 'data', 'result', 'software', 'wordpress']
+            if st.session_state.get('debug_mode', False):
+                st.write(f"📋 **Result structure**: {type(result)}")
+                if isinstance(result, dict):
+                    st.write(f"🔑 **Keys**: {list(result.keys())}")
+                    # Show some sample data
+                    for key, value in list(result.items())[:3]:
+                        st.write(f"  - `{key}`: {type(value)} - {str(value)[:100]}...")
+        
+        elif st.session_state.get('debug_mode', False):
+            st.write(f"❌ **Endpoint `{act}` failed**: {error}")
+    
+    return []
+
+def try_cpanel_file_discovery():
+    """Try to discover WordPress installations via cPanel File Manager API"""
+    # This would require cPanel UAPI access
+    # Implementation would depend on specific cPanel API availability
+    return []
+
+def try_direct_file_scanning():
+    """Try to discover WordPress installations by scanning file system"""
+    # This would require direct file system access
+    # Implementation would depend on server permissions
+    return []
+
+def try_database_detection():
+    """Try to discover WordPress installations by scanning databases"""
+    # This would require database access
+    # Implementation would depend on MySQL/database permissions
+    return []
+
+def show_manual_discovery_assistant():
+    """Show comprehensive manual discovery assistance"""
+    
+    st.write("🛠️ **Manual WordPress Discovery Assistant**")
+    
+    with st.expander("📋 **Step-by-Step WordPress Discovery Guide**", expanded=True):
+        st.markdown("""
+        ### 🔍 **How to Find Your WordPress Installations Manually**
+        
+        #### **Method 1: cPanel File Manager**
+        1. **Log into your cPanel** (same credentials as used here)
+        2. **Open "File Manager"**
+        3. **Navigate to `public_html`** (your main domain folder)
+        4. **Look for these WordPress indicators**:
+           - `wp-config.php` file
+           - `wp-content/` directory
+           - `wp-admin/` directory
+           - `wp-includes/` directory
+        
+        #### **Method 2: Check Softaculous Directly**
+        1. **In cPanel, find "Softaculous Apps Installer"**
+        2. **Click on it**
+        3. **Look for "Current Installations" or "My Apps"**
+        4. **Note down all WordPress installations**
+        
+        #### **Method 3: Domain/Subdomain Check**
+        1. **Visit your domains directly**:
+           - `https://yourdomain.com/wp-admin/` 
+           - `https://subdomain.yourdomain.com/wp-admin/`
+           - `https://yourdomain.com/blog/wp-admin/`
+           - `https://yourdomain.com/wordpress/wp-admin/`
+        2. **If you see a WordPress login page, that's a WordPress site!**
+        
+        #### **Method 4: Database Check**
+        1. **In cPanel, open "phpMyAdmin"**
+        2. **Look for databases with names containing**: `wp_`, `wordpress`, or your domain name
+        3. **Each WordPress database typically has tables like**: `wp_posts`, `wp_users`, `wp_options`
+        """)
+    
+    # Manual entry form
+    with st.expander("📝 **Manual WordPress Site Entry**", expanded=True):
+        st.markdown("**Found WordPress sites? Enter them manually below:**")
+        
+        # Initialize manual sites in session state
+        if 'manual_sites' not in st.session_state:
+            st.session_state.manual_sites = []
+        
+        # Form for adding new site
+        with st.form("add_manual_site"):
+            st.subheader("➕ Add WordPress Site")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                domain = st.text_input(
+                    "Domain", 
+                    placeholder="example.com",
+                    help="Main domain name (without http:// or www)"
+                )
+                path = st.text_input(
+                    "Path", 
+                    placeholder="/wordpress/ or /",
+                    value="/",
+                    help="Path where WordPress is installed (usually / for root)"
+                )
+            
+            with col2:
+                version = st.text_input(
+                    "WordPress Version", 
+                    placeholder="6.4.1",
+                    help="WordPress version (check in wp-admin or leave blank)"
+                )
+                admin_url = st.text_input(
+                    "Admin URL", 
+                    placeholder="https://example.com/wp-admin/",
+                    help="Full URL to WordPress admin (for verification)"
+                )
+            
+            notes = st.text_area(
+                "Notes", 
+                placeholder="Any additional notes about this installation...",
+                help="Optional notes for your reference"
+            )
+            
+            if st.form_submit_button("➕ Add Site", type="primary"):
+                if domain:
+                    new_site = {
+                        'insid': f"manual_{len(st.session_state.manual_sites)}",
+                        'domain': domain.strip(),
+                        'path': path.strip() or "/",
+                        'version': version.strip() or "Unknown",
+                        'user': st.session_state.credentials['user'],
+                        'display_name': f"{domain.strip()}{path.strip() or '/'}",
+                        'admin_url': admin_url.strip(),
+                        'notes': notes.strip(),
+                        'manual_entry': True,
+                        'added_timestamp': datetime.datetime.now().isoformat()
+                    }
+                    
+                    st.session_state.manual_sites.append(new_site)
+                    st.success(f"✅ Added WordPress site: {new_site['display_name']}")
+                    
+                    # Log manual addition
+                    enhanced_logger.log_diagnostic('MANUAL_SITE_ADDED', 'User manually added WordPress site', new_site)
+                else:
+                    st.error("❌ Please enter at least a domain name")
+        
+        # Show current manual sites
+        if st.session_state.manual_sites:
+            st.subheader("📋 Manually Added Sites")
+            
+            for i, site in enumerate(st.session_state.manual_sites):
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    
+                    with col1:
+                        st.write(f"**{site['display_name']}** (v{site['version']})")
+                        if site.get('admin_url'):
+                            st.write(f"🔗 [Admin Panel]({site['admin_url']})")
+                        if site.get('notes'):
+                            st.write(f"📝 {site['notes']}")
+                    
+                    with col2:
+                        if st.button(f"🧪 Test", key=f"test_{i}"):
+                            test_wordpress_site(site)
+                    
+                    with col3:
+                        if st.button(f"🗑️ Remove", key=f"remove_{i}"):
+                            st.session_state.manual_sites.pop(i)
+                            st.rerun()
+            
+            # Action buttons for manual sites
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("✅ Use These Sites", type="primary"):
+                    st.session_state.installations = st.session_state.manual_sites.copy()
+                    st.success(f"✅ Using {len(st.session_state.manual_sites)} manually added sites!")
+                    
+                    # Log bulk manual addition
+                    enhanced_logger.log_diagnostic('MANUAL_SITES_ACTIVATED', 
+                                                 f'User activated {len(st.session_state.manual_sites)} manual sites',
+                                                 {'sites': st.session_state.manual_sites})
+                    st.rerun()
+            
+            with col2:
+                if st.button("🗑️ Clear All"):
+                    st.session_state.manual_sites = []
+                    st.rerun()
+
+def test_wordpress_site(site):
+    """Test if a manually entered WordPress site is accessible"""
+    try:
+        # Test wp-admin access
+        admin_url = site.get('admin_url') or f"https://{site['domain']}{site['path']}wp-admin/"
+        
+        response = requests.get(admin_url, verify=False, timeout=10)
+        
+        if response.status_code == 200:
+            if 'wp-login' in response.text.lower() or 'wordpress' in response.text.lower():
+                st.success(f"✅ WordPress site confirmed at {admin_url}")
+                return True
+            else:
+                st.warning(f"⚠️ Site accessible but doesn't look like WordPress: {admin_url}")
+        else:
+            st.error(f"❌ Site not accessible (HTTP {response.status_code}): {admin_url}")
+        
+        return False
+        
+    except Exception as e:
+        st.error(f"❌ Error testing site: {str(e)}")
+        return False
+
+def extract_installations_from_result(result):
+    """Enhanced extraction of WordPress installations from API responses"""
+    installations = []
+    
+    if st.session_state.get('debug_mode', False):
+        st.write(f"🔍 **Analyzing result structure**: {type(result)}")
+    
+    try:
+        if isinstance(result, dict):
+            # Try different possible keys where installations might be stored
+            possible_keys = [
+                'installations', 'data', 'result', 'software', 'wordpress', 
+                'apps', 'sites', 'domains', 'list', 'items', 'records'
+            ]
             
             for key in possible_keys:
                 if key in result:
                     data = result[key]
+                    if st.session_state.get('debug_mode', False):
+                        st.write(f"🔑 **Found key `{key}`**: {type(data)}")
+                    
                     if isinstance(data, dict):
                         for insid, install_data in data.items():
                             if isinstance(install_data, dict):
-                                installations.append({
-                                    'insid': insid,
-                                    'domain': install_data.get('softurl', install_data.get('domain', '')),
-                                    'path': install_data.get('softpath', install_data.get('path', '')),
-                                    'version': install_data.get('ver', install_data.get('version', '')),
-                                    'user': install_data.get('cuser', install_data.get('user', '')),
-                                    'display_name': f"{install_data.get('softdomain', install_data.get('domain', ''))}/{install_data.get('softdirectory', install_data.get('directory', ''))}"
-                                })
-                    break
-            
-            if installations:
-                if st.session_state.get('debug_mode', False):
-                    st.write(f"✅ **Found {len(installations)} installations** using endpoint: {act}")
-                return installations, None
+                                installation = create_installation_object(insid, install_data)
+                                if installation and installation.get('domain'):
+                                    installations.append(installation)
+                                    if st.session_state.get('debug_mode', False):
+                                        st.write(f"✅ **Extracted installation**: {installation.get('display_name')}")
+                    
+                    elif isinstance(data, list):
+                        for i, install_data in enumerate(data):
+                            if isinstance(install_data, dict):
+                                installation = create_installation_object(f"list_{i}", install_data)
+                                if installation and installation.get('domain'):
+                                    installations.append(installation)
+                                    if st.session_state.get('debug_mode', False):
+                                        st.write(f"✅ **Extracted installation**: {installation.get('display_name')}")
         
+        elif isinstance(result, list):
+            for i, item in enumerate(result):
+                if isinstance(item, dict):
+                    installation = create_installation_object(f"item_{i}", item)
+                    if installation and installation.get('domain'):
+                        installations.append(installation)
+                        if st.session_state.get('debug_mode', False):
+                            st.write(f"✅ **Extracted installation**: {installation.get('display_name')}")
+    
+    except Exception as e:
         if st.session_state.get('debug_mode', False):
-            st.write(f"❌ **Endpoint {act} failed**: {error}")
+            st.write(f"❌ **Error extracting installations**: {str(e)}")
+        enhanced_logger.log_diagnostic('EXTRACTION_ERROR', str(e), {'result_type': type(result)})
     
-    return [], "No WordPress installations found. This could mean: 1) No WordPress sites exist, 2) Softaculous API structure is different, or 3) API permissions issue."
+    return installations
 
-def get_plugins_for_installation(insid):
-    """Get all plugins for a specific WordPress installation"""
-    post_data = {
-        'insid': insid,
-        'type': 'plugins',
-        'list': '1'
+def create_installation_object(insid, install_data):
+    """Create standardized installation object with enhanced field mapping"""
+    
+    # Map various possible field names to standard fields
+    field_mappings = {
+        'domain': ['softurl', 'domain', 'site_url', 'url', 'host', 'hostname'],
+        'path': ['softpath', 'path', 'directory', 'softdirectory', 'folder'],
+        'version': ['ver', 'version', 'wp_version', 'wordpress_version'],
+        'user': ['cuser', 'user', 'owner', 'username'],
+        'display_name': ['display_name', 'name', 'title', 'site_name']
     }
     
-    result, error = make_softaculous_request('wordpress', post_data)
-    if error:
-        audit_logger.log_site_access(f"Site_{insid}", 'PLUGIN_LIST', 'FAILURE', 
-                                   details={'error': error})
-        return None, error
+    installation = {'insid': str(insid)}
     
-    plugins = []
-    if result and 'plugins' in result:
-        for plugin_path, plugin_data in result['plugins'].items():
-            plugins.append({
-                'name': plugin_data.get('Name', 'Unknown'),
-                'slug': plugin_path,
-                'version': plugin_data.get('Version', ''),
-                'active': plugin_data.get('active', False),
-                'update_available': plugin_data.get('update_available', False),
-                'new_version': plugin_data.get('new_version', ''),
-                'description': plugin_data.get('Description', '')
-            })
-    
-    audit_logger.log_site_access(f"Site_{insid}", 'PLUGIN_LIST', 'SUCCESS', 
-                               details={'plugin_count': len(plugins)})
-    return plugins, None
-
-def update_plugin(insid, plugin_slug=None):
-    """Update a specific plugin or all plugins"""
-    post_data = {
-        'insid': insid,
-        'type': 'plugins'
-    }
-    
-    if plugin_slug:
-        post_data['slug'] = plugin_slug
-        post_data['update'] = '1'
-        action = f'PLUGIN_UPDATE_{plugin_slug}'
-    else:
-        post_data['bulk_update'] = '1'
-        action = 'PLUGIN_BULK_UPDATE'
-    
-    result, error = make_softaculous_request('wordpress', post_data)
-    
-    if error:
-        audit_logger.log_site_access(f"Site_{insid}", action, 'FAILURE', 
-                                   details={'error': error})
-    else:
-        audit_logger.log_site_access(f"Site_{insid}", action, 'SUCCESS', 
-                                   details={'plugin_slug': plugin_slug})
-    
-    return result, error
-
-def activate_plugin(insid, plugin_slug):
-    """Activate a plugin"""
-    post_data = {
-        'insid': insid,
-        'type': 'plugins',
-        'slug': plugin_slug,
-        'activate': '1'
-    }
-    
-    result, error = make_softaculous_request('wordpress', post_data)
-    
-    if error:
-        audit_logger.log_site_access(f"Site_{insid}", f'PLUGIN_ACTIVATE_{plugin_slug}', 'FAILURE', 
-                                   details={'error': error})
-    else:
-        audit_logger.log_site_access(f"Site_{insid}", f'PLUGIN_ACTIVATE_{plugin_slug}', 'SUCCESS')
-    
-    return result, error
-
-def deactivate_plugin(insid, plugin_slug):
-    """Deactivate a plugin"""
-    post_data = {
-        'insid': insid,
-        'type': 'plugins',
-        'slug': plugin_slug,
-        'deactivate': '1'
-    }
-    
-    result, error = make_softaculous_request('wordpress', post_data)
-    
-    if error:
-        audit_logger.log_site_access(f"Site_{insid}", f'PLUGIN_DEACTIVATE_{plugin_slug}', 'FAILURE', 
-                                   details={'error': error})
-    else:
-        audit_logger.log_site_access(f"Site_{insid}", f'PLUGIN_DEACTIVATE_{plugin_slug}', 'SUCCESS')
-    
-    return result, error
-
-def create_backup(insid):
-    """Create a backup for a WordPress installation"""
-    post_data = {
-        'backupins': '1',
-        'backup_dir': '1',
-        'backup_datadir': '1',
-        'backup_db': '1'
-    }
-    
-    result, error = make_softaculous_request('backup', post_data, {'insid': insid})
-    
-    if error:
-        audit_logger.log_site_access(f"Site_{insid}", 'BACKUP_CREATE', 'FAILURE', 
-                                   details={'error': error})
-    else:
-        audit_logger.log_site_access(f"Site_{insid}", 'BACKUP_CREATE', 'SUCCESS')
-    
-    return result, error
-
-def list_backups():
-    """List all backups"""
-    result, error = make_softaculous_request('backups')
-    return result, error
-
-def download_backup_file(backup_filename):
-    """Download a backup file to local machine"""
-    try:
-        # Get the backup file content via Softaculous API
-        params = {'download': backup_filename}
-        result, error = make_softaculous_request('backups', additional_params=params)
+    for field, possible_keys in field_mappings.items():
+        value = None
+        for key in possible_keys:
+            if key in install_data:
+                value = install_data[key]
+                break
         
-        if error:
-            audit_logger.log_file_operation('BACKUP_DOWNLOAD', backup_filename, 'FAILURE', 
-                                          details={'error': error})
-            return None, error
-        
-        # Save to local backup directory
-        local_file_path = LOCAL_BACKUP_DIR / backup_filename
-        
-        # If result contains binary data, save it
-        if result and isinstance(result, bytes):
-            with open(local_file_path, 'wb') as f:
-                f.write(result)
-            
-            audit_logger.log_file_operation('BACKUP_DOWNLOAD', local_file_path, 'SUCCESS', 
-                                          details={'file_size': len(result)})
-            return local_file_path, None
-        else:
-            audit_logger.log_file_operation('BACKUP_DOWNLOAD', backup_filename, 'FAILURE', 
-                                          details={'error': 'No backup data received'})
-            return None, "No backup data received"
-            
-    except Exception as e:
-        audit_logger.log_file_operation('BACKUP_DOWNLOAD', backup_filename, 'FAILURE', 
-                                      details={'error': str(e)})
-        return None, str(e)
-
-def delete_backup(backup_filename):
-    """Delete a backup file"""
-    params = {'remove': backup_filename}
-    result, error = make_softaculous_request('backups', additional_params=params)
-    return result, error
-
-def upgrade_wordpress_installation(insid):
-    """Upgrade WordPress installation"""
-    post_data = {'softsubmit': '1'}
-    result, error = make_softaculous_request('upgrade', post_data, {'insid': insid})
-    return result, error
-
-def create_compressed_archive(backup_files, archive_name, compression_type):
-    """Create a compressed archive from multiple backup files"""
-    try:
-        archive_path = DOWNLOADS_DIR / f"{archive_name}.{compression_type}"
-        
-        if compression_type == 'zip':
-            with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for backup_file in backup_files:
-                    file_path = LOCAL_BACKUP_DIR / backup_file
-                    if file_path.exists():
-                        zipf.write(file_path, backup_file)
-                        audit_logger.log_file_operation('ARCHIVE_ADD', backup_file, 'SUCCESS')
-        
-        elif compression_type == 'tar.gz':
-            with tarfile.open(archive_path, 'w:gz') as tar:
-                for backup_file in backup_files:
-                    file_path = LOCAL_BACKUP_DIR / backup_file
-                    if file_path.exists():
-                        tar.add(file_path, arcname=backup_file)
-                        audit_logger.log_file_operation('ARCHIVE_ADD', backup_file, 'SUCCESS')
-        
-        audit_logger.log_file_operation('ARCHIVE_CREATE', archive_path.name, 'SUCCESS',
-                                      details={'file_count': len(backup_files), 'compression': compression_type})
-        return archive_path, None
+        if value:
+            installation[field] = str(value).strip()
     
-    except Exception as e:
-        audit_logger.log_file_operation('ARCHIVE_CREATE', f"{archive_name}.{compression_type}", 'FAILURE',
-                                      details={'error': str(e)})
-        return None, str(e)
-
-def bulk_download_backups(backup_list, progress_callback=None):
-    """Download multiple backups from server"""
-    results = {'success': [], 'errors': []}
+    # Generate display name if not found
+    if not installation.get('display_name') and installation.get('domain'):
+        path = installation.get('path', '/')
+        installation['display_name'] = f"{installation['domain']}{path if path != '/' else ''}"
     
-    for i, backup_filename in enumerate(backup_list):
-        if progress_callback:
-            progress_callback(i, len(backup_list), backup_filename)
-        
-        local_file, error = download_backup_file(backup_filename)
-        if error:
-            results['errors'].append(f"{backup_filename}: {error}")
-        else:
-            results['success'].append(backup_filename)
-    
-    return results
-
-def get_backup_file_info(backup_filename):
-    """Get information about a backup file"""
-    try:
-        file_path = LOCAL_BACKUP_DIR / backup_filename
-        if file_path.exists():
-            stat = file_path.stat()
-            return {
-                'name': backup_filename,
-                'size': stat.st_size,
-                'modified': datetime.datetime.fromtimestamp(stat.st_mtime),
-                'path': file_path
-            }
+    # Validate that we have minimum required fields
+    if not installation.get('domain'):
         return None
-    except Exception:
-        return None
+    
+    # Set defaults
+    installation.setdefault('path', '/')
+    installation.setdefault('version', 'Unknown')
+    installation.setdefault('user', st.session_state.credentials.get('user', 'Unknown'))
+    
+    return installation
 
-def export_sites_to_csv(installations):
-    """Export WordPress installations to CSV format"""
-    output = io.StringIO()
-    writer = csv.writer(output)
+# --- Enhanced Login Screen ---
+def show_enhanced_login_screen():
+    """Enhanced login screen with comprehensive server analysis"""
+    st.title("🔐 Enhanced A2 Hosting WordPress Manager")
+    st.markdown("### Connect to your A2 Hosting cPanel account with advanced diagnostics")
     
-    # Write header
-    writer.writerow([
-        'Installation ID', 'Domain', 'Display Name', 'Path', 
-        'WordPress Version', 'User', 'Full URL'
-    ])
+    # Add enhanced information
+    st.info("💡 **Enhanced Version**: This version includes comprehensive server analysis and advanced troubleshooting capabilities")
     
-    # Write data rows
-    for installation in installations:
-        writer.writerow([
-            installation.get('insid', ''),
-            installation.get('domain', ''),
-            installation.get('display_name', ''),
-            installation.get('path', ''),
-            installation.get('version', ''),
-            installation.get('user', ''),
-            f"https://{installation.get('domain', '')}{installation.get('path', '')}"
-        ])
-    
-    return output.getvalue()
-
-def export_sites_to_json(installations):
-    """Export WordPress installations to JSON format"""
-    export_data = {
-        'export_timestamp': datetime.datetime.now().isoformat(),
-        'total_installations': len(installations),
-        'installations': installations
-    }
-    return json.dumps(export_data, indent=2)
-
-def create_detailed_site_report(installations):
-    """Create a detailed markdown report of all installations"""
-    report = []
-    report.append("# WordPress Installations Report")
-    report.append(f"**Generated:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    report.append(f"**Total Sites:** {len(installations)}")
-    report.append("")
-    
-    for i, installation in enumerate(installations, 1):
-        report.append(f"## {i}. {installation.get('display_name', 'Unknown')}")
-        report.append(f"- **Installation ID:** {installation.get('insid', 'N/A')}")
-        report.append(f"- **Domain:** {installation.get('domain', 'N/A')}")
-        report.append(f"- **Path:** {installation.get('path', 'N/A')}")
-        report.append(f"- **WordPress Version:** {installation.get('version', 'N/A')}")
-        report.append(f"- **User:** {installation.get('user', 'N/A')}")
-        report.append(f"- **Full URL:** https://{installation.get('domain', '')}{installation.get('path', '')}")
-        report.append("")
-    
-    return "\n".join(report)
-
-# --- A2 Hosting UI Functions ---
-def show_a2_hosting_dashboard():
-    """A2 Hosting specific dashboard with server info"""
-    if 'credentials' in st.session_state:
-        creds = st.session_state.credentials
-        
-        # Server information
-        is_a2, server_info = detect_a2_hosting_server(creds['host'])
-        
-        if is_a2:
-            st.sidebar.markdown("### 🏢 A2 Hosting Info")
-            st.sidebar.success(f"**Server Location:** {server_info['location']}")
-            st.sidebar.info(f"**Server Type:** {server_info['server_type']}")
-            
-            # A2 Hosting quick links
-            st.sidebar.markdown("### 🔗 A2 Hosting Links")
-            st.sidebar.markdown("[📧 A2 Support](mailto:support@a2hosting.com)")
-            st.sidebar.markdown("[🎫 Submit Ticket](https://my.a2hosting.com/submitticket.php)")
-            st.sidebar.markdown("[📚 A2 Knowledge Base](https://www.a2hosting.com/kb)")
-            st.sidebar.markdown("[💻 cPanel Direct](https://my.a2hosting.com/clientarea.php)")
-        
-        # Debug mode toggle
-        st.sidebar.markdown("### 🔧 Debug Options")
-        st.session_state.debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=False)
-        
-        if st.session_state.debug_mode:
-            st.sidebar.warning("Debug mode enabled - API calls will show detailed information")
-
-def check_a2_hosting_limits():
-    """Check if we're approaching A2 Hosting limits"""
-    if 'api_call_count' not in st.session_state:
-        st.session_state.api_call_count = 0
-    
-    # A2 Hosting recommended limits
-    if st.session_state.api_call_count > 50:
-        st.warning("⚠️ You've made many API calls. A2 Hosting may throttle requests.")
-        st.info("💡 Consider taking a break or reducing batch sizes.")
-    
-    elif st.session_state.api_call_count > 30:
-        st.info("ℹ️ Approaching A2 Hosting recommended API limits.")
-
-def show_a2_hosting_info():
-    """Display A2 Hosting specific information and tips"""
-    with st.expander("🏢 A2 Hosting WordPress Management", expanded=False):
+    with st.expander("🔍 What's New in Enhanced Version"):
         st.markdown("""
-        ### 🚀 A2 Hosting WordPress Management
+        ### 🚀 Enhanced Features:
         
-        **What makes A2 Hosting special:**
-        - **Turbo Servers**: Up to 20x faster page loads
-        - **Developer Friendly**: SSH access, staging sites, Git integration
-        - **Pre-installed Software**: Softaculous with 1-click WordPress installs
-        - **Multiple Server Locations**: USA, Netherlands, Singapore
-        
-        **A2 Hosting Server Types:**
-        - **Shared Hosting**: `nl1-ss##.a2hosting.com`, `sg##.a2hosting.com`
-        - **VPS/Dedicated**: `server.a2hosting.com`
-        - **Turbo Servers**: Enhanced performance with caching
-        
-        **Important A2 Hosting Notes:**
-        - ⚡ **Turbo Plan**: Some features may work differently on Turbo servers
-        - 🔒 **Security**: A2 has additional security layers that may affect API calls
-        - 🌍 **Server Location**: Performance varies by server location
-        - 📞 **Support**: A2 Hosting has excellent 24/7 support
-        
-        **Troubleshooting A2 Issues:**
-        - **Slow responses**: A2 servers can be slow during peak hours
-        - **API limits**: A2 may throttle API calls - use rate limiting
-        - **SSL issues**: Some A2 servers use self-signed certificates
-        - **Firewall**: A2's firewall may block certain operations
+        - **🔍 Comprehensive Server Analysis**: Automatic detection of hosting configuration
+        - **🧪 Multi-Path API Testing**: Tests multiple Softaculous paths and formats
+        - **🔐 Authentication Method Testing**: Tests different authentication approaches
+        - **📊 Detailed Diagnostics**: Complete API request/response logging
+        - **🛠️ Advanced Troubleshooting**: Step-by-step problem identification
+        - **📝 Manual Entry Assistant**: Guided manual WordPress site discovery
+        - **💾 Enhanced Logging**: Detailed logs for support purposes
         """)
-
-def show_a2_hosting_login_screen():
-    """Enhanced login screen with A2 Hosting (including reseller) support"""
-    st.title("🔐 A2 Hosting WordPress Manager")
-    st.markdown("### Connect to your A2 Hosting cPanel account")
     
-    # Add A2 Hosting branding/info
-    st.info("💡 **A2 Hosting Users**: Use your cPanel credentials (works with direct A2 accounts and reseller accounts)")
-    
-    with st.form("a2_login_form"):
-        st.subheader("📋 A2 Hosting cPanel Credentials")
-        
-        # Helpful hints for A2 users
-        with st.expander("🤔 Where do I find these credentials?"):
-            st.markdown("""
-            **Your A2 Hosting credentials:**
-            
-            1. **cPanel Host**: Found in your A2 Hosting welcome email
-               - **Direct A2**: `server.a2hosting.com` or `nl1-ss##.a2hosting.com`
-               - **Reseller Accounts**: Custom domains like `server.clasit.org`
-               - Check your hosting account dashboard for the exact server name
-            
-            2. **cPanel Username**: Usually your domain name or chosen username
-               - Found in your A2 Hosting welcome email
-               - Same username you use to log into cPanel
-            
-            3. **cPanel Password**: Your cPanel password
-               - Same password you use to log into cPanel
-               - Can be reset through A2 Hosting client area
-            
-            4. **Port**: Usually 2083 (secure) or 2082 (non-secure)
-               - A2 Hosting typically uses 2083 for secure connections
-            
-            **Need help?** Contact A2 Hosting support at support@a2hosting.com
-            """)
+    with st.form("enhanced_login_form"):
+        st.subheader("📋 cPanel Credentials")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Smart host detection
             host = st.text_input(
                 "cPanel Host", 
-                placeholder="server.clasit.org or server.a2hosting.com",
-                help="Your A2 Hosting server name (found in welcome email)"
+                placeholder="server.clasit.org",
+                help="Your cPanel server hostname"
             )
-            
-            # Host validation for A2 Hosting (including resellers)
-            if host:
-                is_a2, server_info = detect_a2_hosting_server(host)
-                if is_a2:
-                    if 'reseller' in server_info:
-                        st.success(f"✅ A2 Hosting Reseller detected: {server_info['reseller']} ({server_info['location']})")
-                    else:
-                        st.success(f"✅ A2 Hosting server detected: {server_info['location']}")
-                else:
-                    st.warning("⚠️ This doesn't look like an A2 Hosting server or reseller")
             
             user = st.text_input(
                 "cPanel Username", 
                 placeholder="your_username",
-                help="Your cPanel username (same as cPanel login)"
+                help="Your cPanel username"
             )
         
         with col2:
-            # A2 Hosting typically uses 2083
             port = st.selectbox(
                 "Port", 
                 ["2083", "2082"], 
                 index=0,
-                help="A2 Hosting typically uses 2083 (secure)"
+                help="Usually 2083 for secure connections"
             )
             
             password = st.text_input(
                 "cPanel Password", 
                 type="password",
-                help="Your cPanel password (same as cPanel login)"
+                help="Your cPanel password"
             )
         
-        # A2 Hosting specific options
-        st.subheader("🔧 A2 Hosting Options")
+        # Enhanced options
+        st.subheader("🔧 Enhanced Options")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
+        
         with col1:
-            respect_rate_limits = st.checkbox(
-                "Respect A2 rate limits", 
+            run_server_analysis = st.checkbox(
+                "Run server analysis", 
                 value=True,
-                help="Adds delays between operations to avoid overwhelming A2 servers"
+                help="Analyze server configuration and capabilities"
             )
         
         with col2:
-            use_secure_connection = st.checkbox(
-                "Use secure connection (SSL)", 
+            enable_debug_mode = st.checkbox(
+                "Enable debug mode", 
                 value=True,
-                help="Recommended for A2 Hosting (uses port 2083)"
+                help="Show detailed API request/response information"
             )
         
-        # Override port if secure connection is selected
-        if use_secure_connection:
-            port = "2083"
+        with col3:
+            respect_rate_limits = st.checkbox(
+                "Respect rate limits", 
+                value=True,
+                help="Add delays between API calls"
+            )
         
-        submit = st.form_submit_button("🚀 Connect to A2 Hosting", type="primary")
+        submit = st.form_submit_button("🔍 Connect & Analyze", type="primary")
         
         if submit:
             if not all([host, user, password]):
-                st.error("❌ Please fill in all A2 Hosting cPanel credentials")
+                st.error("❌ Please fill in all cPanel credentials")
                 return
             
-            # Validate A2 Hosting format (including resellers)
-            validation_errors = validate_a2_credentials(host, user, password, port)
-            if validation_errors:
-                for error in validation_errors:
-                    st.error(f"❌ {error}")
-                return
+            # Store credentials and settings
+            st.session_state.credentials = {
+                'host': host,
+                'port': port,
+                'user': user,
+                'pass': password,
+                'rate_limits': respect_rate_limits
+            }
             
-            with st.spinner("🔄 Connecting to A2 Hosting cPanel..."):
-                if test_a2_cpanel_connection(host, port, user, password):
-                    # Store credentials with A2 specific settings
-                    st.session_state.credentials = {
-                        'host': host,
-                        'port': port,
-                        'user': user,
-                        'pass': password,
-                        'provider': 'A2 Hosting',
-                        'rate_limits': respect_rate_limits,
-                        'secure_connection': use_secure_connection
-                    }
+            st.session_state.debug_mode = enable_debug_mode
+            
+            # Run server analysis if requested
+            if run_server_analysis:
+                with st.spinner("🔍 Running comprehensive server analysis..."):
+                    analysis_results = analyze_server_configuration(host, port, user, password)
+                    st.session_state.server_analysis = analysis_results
                     
-                    # Log successful A2 login
-                    audit_logger.log_auth_event('A2_LOGIN', 'SUCCESS', 
-                                              details={'host': host, 'port': port, 'secure': use_secure_connection})
-                    
-                    st.success("✅ Successfully connected to A2 Hosting!")
-                    st.balloons()  # Celebration for successful connection
+                    # Show analysis results
+                    show_server_analysis_results(analysis_results)
+            
+            # Test basic authentication
+            with st.spinner("🔐 Testing authentication..."):
+                auth_success = test_basic_authentication(host, port, user, password)
+                
+                if auth_success:
+                    st.success("✅ Authentication successful! Proceeding to WordPress discovery...")
+                    enhanced_logger.log_diagnostic('AUTH_SUCCESS', 'Enhanced login successful', {
+                        'host': host, 'port': port, 'analysis_run': run_server_analysis
+                    })
                     st.rerun()
                 else:
-                    st.error("❌ Failed to connect to A2 Hosting cPanel")
-                    st.markdown("""
-                    **Troubleshooting A2 Hosting Connection:**
-                    
-                    1. **Double-check credentials**: Verify in your A2 Hosting client area
-                    2. **Server name**: Make sure you're using the correct server name
-                    3. **Reseller accounts**: Use your reseller's custom domain (e.g., server.clasit.org)
-                    4. **Port**: Try port 2082 if 2083 doesn't work
-                    5. **Password**: Try resetting your cPanel password
-                    6. **IP restrictions**: A2 may block certain IPs
-                    
-                    **Still having issues?** Contact A2 Hosting support or your reseller
-                    """)
+                    st.error("❌ Authentication failed. Please check your credentials.")
+                    return
 
-def show_main_app():
-    """Show the main application interface"""
-    # A2 Hosting dashboard
-    show_a2_hosting_dashboard()
+def show_server_analysis_results(analysis_results):
+    """Display comprehensive server analysis results"""
     
-    # Check for A2 limits
-    check_a2_hosting_limits()
+    st.subheader("📊 Server Analysis Results")
     
-    # Add logout button in sidebar
-    with st.sidebar:
-        st.markdown("---")
-        st.write("### 🔐 Session Info")
-        st.write(f"**Host:** {st.session_state.credentials['host']}")
-        st.write(f"**User:** {st.session_state.credentials['user']}")
-        
-        if st.button("🚪 Logout"):
-            # Log logout event
-            audit_logger.log_auth_event('LOGOUT', 'SUCCESS')
-            
-            for key in ['credentials', 'installations', 'selected_installation', 'plugins']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
-
-def run_bulk_audit(domains, audit_options):
-    """Run bulk audit on selected domains"""
-    total_sites = len(domains)
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    # Basic info
+    col1, col2, col3 = st.columns(3)
     
-    results = {
-        'success': [],
-        'errors': []
-    }
+    with col1:
+        st.metric("Hosting Provider", analysis_results.get('hosting_provider', 'Unknown'))
     
-    # Log start of bulk operation
-    audit_logger.log_bulk_operation('BULK_AUDIT_START', total_sites, 
-                                   {'success': [], 'errors': []}, 
-                                   details={'audit_options': audit_options})
+    with col2:
+        st.metric("Server Type", analysis_results.get('server_type', 'Unknown'))
     
-    for i, domain in enumerate(domains):
-        status_text.text(f"Processing {domain['display_name']} ({i+1}/{total_sites})")
-        
-        # Update plugins
-        if "Update all plugins" in audit_options:
-            st.write(f"🔄 Updating plugins for {domain['display_name']}...")
-            result, error = update_plugin(domain['insid'])
-            if error:
-                st.error(f"Plugin update failed for {domain['display_name']}: {error}")
-                results['errors'].append(f"Plugin update failed for {domain['display_name']}: {error}")
-            else:
-                st.success(f"✅ Plugins updated for {domain['display_name']}")
-                results['success'].append(f"Plugins updated for {domain['display_name']}")
-        
-        # Upgrade WordPress core
-        if "Upgrade WordPress core" in audit_options:
-            st.write(f"⚙️ Upgrading WordPress core for {domain['display_name']}...")
-            result, error = upgrade_wordpress_installation(domain['insid'])
-            if error:
-                st.error(f"Core upgrade failed for {domain['display_name']}: {error}")
-                results['errors'].append(f"Core upgrade failed for {domain['display_name']}: {error}")
-            else:
-                st.success(f"✅ WordPress core upgraded for {domain['display_name']}")
-                results['success'].append(f"WordPress core upgraded for {domain['display_name']}")
-        
-        # Create backups
-        if "Create backups" in audit_options:
-            st.write(f"💾 Creating backup for {domain['display_name']}...")
-            result, error = create_backup(domain['insid'])
-            if error:
-                st.error(f"Backup failed for {domain['display_name']}: {error}")
-                results['errors'].append(f"Backup failed for {domain['display_name']}: {error}")
-            else:
-                st.success(f"✅ Backup created for {domain['display_name']}")
-                results['success'].append(f"Backup created for {domain['display_name']}")
-        
-        progress_bar.progress((i + 1) / total_sites)
+    with col3:
+        st.metric("cPanel Version", analysis_results.get('cpanel_version', 'Unknown'))
     
-    # Log completion of bulk operation
-    audit_logger.log_bulk_operation('BULK_AUDIT_COMPLETE', total_sites, results, 
-                                   details={'audit_options': audit_options})
-    
-    # Show final results
-    status_text.text("Bulk audit complete!")
-    
-    with st.expander("📊 Bulk Audit Results Summary"):
-        st.write(f"**✅ Successful Operations:** {len(results['success'])}")
-        for success in results['success']:
-            st.write(f"• {success}")
-        
-        if results['errors']:
-            st.write(f"**❌ Failed Operations:** {len(results['errors'])}")
-            for error in results['errors']:
-                st.write(f"• {error}")
-    
-    st.success("🎉 Bulk audit process completed!")
-
-def run_bulk_plugin_update(domains):
-    """Run plugin updates on all selected domains"""
-    total_sites = len(domains)
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    success_count = 0
-    error_count = 0
-    results = {'success': [], 'errors': []}
-    
-    # Log start of bulk operation
-    audit_logger.log_bulk_operation('BULK_PLUGIN_UPDATE_START', total_sites, results)
-    
-    for i, domain in enumerate(domains):
-        status_text.text(f"Updating plugins for {domain['display_name']} ({i+1}/{total_sites})")
-        
-        result, error = update_plugin(domain['insid'])
-        if error:
-            st.error(f"❌ Plugin update failed for {domain['display_name']}: {error}")
-            error_count += 1
-            results['errors'].append(f"{domain['display_name']}: {error}")
+    # Detailed results in expandable sections
+    with st.expander("🔒 SSL/Certificate Information"):
+        ssl_info = analysis_results.get('ssl_info', {})
+        if ssl_info.get('error'):
+            st.warning(f"SSL Issue: {ssl_info['error']}")
         else:
-            st.success(f"✅ Plugins updated for {domain['display_name']}")
-            success_count += 1
-            results['success'].append(domain['display_name'])
-        
-        progress_bar.progress((i + 1) / total_sites)
+            st.json(ssl_info)
     
-    # Log completion of bulk operation
-    audit_logger.log_bulk_operation('BULK_PLUGIN_UPDATE_COMPLETE', total_sites, results)
-    
-    status_text.text("Plugin updates complete!")
-    st.success(f"🎉 Plugin updates completed! ✅ {success_count} successful, ❌ {error_count} failed")
-
-# --- Main Streamlit Application ---
-st.set_page_config(page_title="A2 Hosting WordPress Manager", layout="wide")
-
-# Always show the title and instructions at the top
-st.title("🔧 A2 Hosting WordPress Manager")
-st.markdown("### Enhanced WordPress Management for A2 Hosting (Including Resellers)")
-
-# Instructions Section - Always visible at the top
-with st.expander("📖 Instructions - A2 Hosting WordPress Management Guide! 🧙‍♂️", expanded=False):
-    st.markdown("""
-    # 🎉 Welcome to A2 Hosting WordPress Management!
-    
-    **Perfect for A2 Hosting customers!** This tool is specifically optimized for A2 Hosting's cPanel and Softaculous integration.
-    
-    ## 🚀 What This Tool Does
-    
-    - **🔌 Manage plugins** across all your WordPress sites
-    - **🔄 Update everything** with bulk operations
-    - **💾 Create and download backups** with compression
-    - **⚙️ Upgrade WordPress cores** across multiple sites
-    - **📊 Export site inventories** for reporting
-    - **🔒 Complete audit logging** for security compliance
-    
-    ## 🏢 A2 Hosting Benefits
-    
-    - **Turbo Servers**: Enhanced performance
-    - **Multiple Locations**: Netherlands, Singapore, USA
-    - **Excellent Support**: 24/7 technical support
-    - **Developer Tools**: SSH, Git, staging sites
-    
-    ## 🔧 Troubleshooting
-    
-    **If you don't see WordPress sites:**
-    1. Make sure you have WordPress sites installed via Softaculous
-    2. Check that your cPanel user has permission to manage WordPress
-    3. Enable Debug Mode in the sidebar to see detailed API information
-    4. Contact A2 Hosting support if issues persist
-    
-    **Need help?** Contact A2 Hosting support at support@a2hosting.com
-    """)
-
-# Show A2 Hosting information
-show_a2_hosting_info()
-
-st.markdown("---")
-
-# Check if user is authenticated
-if 'credentials' not in st.session_state:
-    show_a2_hosting_login_screen()
-else:
-    show_main_app()
-
-    # Initialize session state
-    if 'installations' not in st.session_state:
-        st.session_state.installations = []
-    if 'selected_installation' not in st.session_state:
-        st.session_state.selected_installation = None
-    if 'plugins' not in st.session_state:
-        st.session_state.plugins = []
-    if 'available_backups' not in st.session_state:
-        st.session_state.available_backups = {}
-
-    # Load WordPress installations
-    if not st.session_state.installations:
-        with st.spinner("Loading WordPress installations from A2 Hosting..."):
-            installations, error = list_wordpress_installations()
-            if error:
-                audit_logger.log_auth_event('SITE_DISCOVERY', 'FAILURE', 
-                                          details={'error': error})
-                st.error(f"Failed to load installations: {error}")
-                
-                # Show troubleshooting info
-                st.markdown("""
-                **Troubleshooting WordPress Discovery:**
-                
-                1. **No WordPress sites found**: Make sure you have WordPress sites installed via Softaculous in cPanel
-                2. **API permissions**: Your cPanel user may not have permission to access Softaculous
-                3. **Server configuration**: A2 Hosting may have a different Softaculous setup
-                4. **Debug mode**: Enable Debug Mode in the sidebar to see detailed API information
-                
-                **Next steps:**
-                - Check your cPanel for WordPress installations
-                - Contact A2 Hosting support if you know you have WordPress sites
-                - Try logging out and back in with correct credentials
-                """)
-                
-                if not handle_a2_hosting_errors(error):
-                    st.error("Please check your A2 Hosting credentials and try again.")
-                st.stop()
+    with st.expander("🔐 Authentication Methods"):
+        auth_methods = analysis_results.get('authentication_methods', [])
+        for method in auth_methods:
+            if method.get('working'):
+                st.success(f"✅ {method['method']} - Working")
             else:
-                st.session_state.installations = installations
-                audit_logger.log_auth_event('SITE_DISCOVERY', 'SUCCESS', 
-                                          details={'site_count': len(installations)})
+                st.error(f"❌ {method['method']} - Failed")
+    
+    with st.expander("🔍 Available API Endpoints"):
+        api_endpoints = analysis_results.get('available_apis', [])
+        for endpoint in api_endpoints:
+            status = "✅" if endpoint.get('accessible') else "❌"
+            st.write(f"{status} {endpoint['path']} ({endpoint['type']}) - Status: {endpoint.get('status_code', 'Error')}")
+    
+    with st.expander("⚙️ Softaculous Configuration"):
+        softaculous_info = analysis_results.get('softaculous', {})
+        if softaculous_info.get('installed'):
+            st.success("✅ Softaculous is installed and accessible")
+            st.write(f"**Version**: {softaculous_info.get('version', 'Unknown')}")
+            st.write(f"**Accessible Paths**: {len(softaculous_info.get('accessible_paths', []))}")
+            st.write(f"**Supported APIs**: {', '.join(softaculous_info.get('supported_apis', []))}")
+            st.write(f"**WordPress Support**: {'✅ Yes' if softaculous_info.get('wordpress_support') else '❌ Unknown'}")
+        else:
+            st.error("❌ Softaculous not detected or not accessible")
 
-    # Rest of the application continues only if we have installations
-    if st.session_state.installations:
-        # Domain selection
-        st.header("🌐 Select WordPress Installations")
-        
-        # Export options before domain selection
-        st.subheader("📊 Export Site Information")
-        st.markdown("Export your WordPress installations data for record-keeping or analysis.")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            # CSV Export
-            csv_data = export_sites_to_csv(st.session_state.installations)
-            if st.download_button(
-                label="📊 Export CSV",
-                data=csv_data,
-                file_name=f"a2_wordpress_sites_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                help="Download site list as CSV file"
-            ):
-                audit_logger.log_export_operation('CSV', len(st.session_state.installations), 'SUCCESS')
-        
-        with col2:
-            # JSON Export
-            json_data = export_sites_to_json(st.session_state.installations)
-            if st.download_button(
-                label="📋 Export JSON",
-                data=json_data,
-                file_name=f"a2_wordpress_sites_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json",
-                help="Download site list as JSON file"
-            ):
-                audit_logger.log_export_operation('JSON', len(st.session_state.installations), 'SUCCESS')
-        
-        with col3:
-            # Markdown Report
-            report_data = create_detailed_site_report(st.session_state.installations)
-            if st.download_button(
-                label="📝 Export Report",
-                data=report_data,
-                file_name=f"a2_wordpress_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                mime="text/markdown",
-                help="Download detailed markdown report"
-            ):
-                audit_logger.log_export_operation('MARKDOWN', len(st.session_state.installations), 'SUCCESS')
-        
-        with col4:
-            # Display count
-            st.metric("Total Sites", len(st.session_state.installations))
-        
-        st.markdown("---")
-        
-        # Create a multiselect for domain selection
-        domain_options = [f"{domain['display_name']} (v{domain['version']})" for domain in st.session_state.installations]
-        selected_indices = st.multiselect(
-            "Select domains to manage:",
-            range(len(st.session_state.installations)),
-            format_func=lambda x: domain_options[x],
-            default=[],
-            help="Select one or more WordPress sites to manage"
+def test_basic_authentication(host, port, user, password):
+    """Test basic authentication to cPanel"""
+    try:
+        url = f"https://{host}:{port}/frontend/jupiter/"
+        response = requests.get(
+            url,
+            auth=(user, password),
+            verify=False,
+            timeout=15
         )
         
-        selected_domains = [st.session_state.installations[i] for i in selected_indices]
-        
-        if selected_domains:
-            st.success(f"✅ Selected {len(selected_domains)} domains for management")
-            
-            # Display selected domains
-            with st.expander("📋 Selected Domains"):
-                for domain in selected_domains:
-                    st.write(f"• {domain['display_name']} (v{domain['version']}) - User: {domain['user']}")
-        else:
-            st.warning("⚠️ Please select at least one domain to continue")
-            st.stop()
-        
-        # Continue with the rest of the application...
-        st.success("🎉 WordPress sites loaded successfully! You can now manage your sites.")
-        st.info("💡 The rest of the site management features will be available once you select domains above.")
+        return response.status_code in [200, 302]
     
-    else:
-        st.info("ℹ️ No WordPress installations found. Please install WordPress via Softaculous in cPanel first.")
+    except Exception as e:
+        enhanced_logger.log_diagnostic('AUTH_TEST_ERROR', str(e), {
+            'host': host, 'port': port
+        })
+        return False
 
+# --- Enhanced Main Application ---
+def show_enhanced_main_app():
+    """Enhanced main application with comprehensive diagnostics"""
+    
+    # Enhanced sidebar with detailed info
+    with st.sidebar:
+        st.markdown("### 🔐 Session Info")
+        creds = st.session_state.credentials
+        st.write(f"**Host:** {creds['host']}")
+        st.write(f"**User:** {creds['user']}")
+        st.write(f"**Port:** {creds['port']}")
+        
+        # Show server analysis summary if available
+        if 'server_analysis' in st.session_state:
+            analysis = st.session_state.server_analysis
+            st.markdown("### 📊 Server Info")
+            st.write(f"**Provider:** {analysis.get('hosting_provider', 'Unknown')}")
+            st.write(f"**Type:** {analysis.get('server_type', 'Unknown')}")
+            
+            if analysis.get('softaculous', {}).get('installed'):
+                st.success("✅ Softaculous Available")
+            else:
+                st.error("❌ Softaculous Issues")
+        
+        # Debug controls
+        st.markdown("### 🔧 Debug Controls")
+        st.session_state.debug_mode = st.checkbox("Debug Mode", value=st.session_state.get('debug_mode', False))
+        
+        if st.button("🔍 Re-run Server Analysis"):
+            with st.spinner("Running server analysis..."):
+                analysis_results = analyze_server_configuration(
+                    creds['host'], creds['port'], creds['user'], creds['pass']
+                )
+                st.session_state.server_analysis = analysis_results
+                st.rerun()
+        
+        # Working configuration display
+        if 'working_api_config' in st.session_state:
+            st.markdown("### ✅ Working API Config")
+            config = st.session_state.working_api_config
+            st.code(f"""
+Path: {config['path']}
+Format: {config['format']}
+Auth: {config['auth_method']}
+            """)
+        
+        st.markdown("---")
+        if st.button("🚪 Logout"):
+            # Clear all session state
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+    
+    # Initialize installations if not present
+    if 'installations' not in st.session_state:
+        st.session_state.installations = []
+    
+    # WordPress discovery
+    if not st.session_state.installations:
+        st.header("🔍 WordPress Discovery")
+        
+        with st.spinner("🔍 Discovering WordPress installations..."):
+            installations, error = enhanced_wordpress_discovery()
+            
+            if installations:
+                st.session_state.installations = installations
+                st.success(f"✅ Found {len(installations)} WordPress installations!")
+                
+                # Show installations
+                for installation in installations:
+                    st.write(f"• {installation['display_name']} (v{installation['version']})")
+            
+            elif error:
+                st.error(f"❌ WordPress discovery failed: {error}")
+                st.info("💡 Please use the manual discovery assistant above to add your WordPress sites.")
+            
+            else:
+                st.info("ℹ️ No WordPress installations found automatically. Please use manual discovery.")
+    
+    # Main application continues here...
+    if st.session_state.installations:
+        st.header("🎉 WordPress Sites Ready!")
+        st.write(f"Found {len(st.session_state.installations)} WordPress installations")
+        
+        # Show sites
+        for installation in st.session_state.installations:
+            with st.expander(f"📝 {installation['display_name']}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Domain:** {installation['domain']}")
+                    st.write(f"**Path:** {installation['path']}")
+                with col2:
+                    st.write(f"**Version:** {installation['version']}")
+                    st.write(f"**User:** {installation['user']}")
+                
+                if installation.get('admin_url'):
+                    st.write(f"🔗 [Admin Panel]({installation['admin_url']})")
+
+# --- Main Application Entry Point ---
+def main():
+    """Enhanced main application entry point"""
+    
+    st.set_page_config(
+        page_title="Enhanced A2 Hosting WordPress Manager", 
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Initialize session state
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = hashlib.md5(
+            f"{datetime.datetime.now().isoformat()}".encode()
+        ).hexdigest()[:16]
+    
+    # Always show header
+    st.title("🔧 Enhanced A2 Hosting WordPress Manager")
+    st.markdown("### Advanced WordPress Management with Comprehensive Diagnostics")
+    
+    # Instructions
+    with st.expander("📖 Enhanced Instructions & Features"):
+        st.markdown("""
+        # 🎉 Enhanced A2 Hosting WordPress Manager
+        
+        ## 🚀 What's New:
+        - **🔍 Comprehensive Server Analysis**: Automatic detection of your hosting configuration
+        - **🧪 Multi-Path Testing**: Tests multiple Softaculous API paths and formats
+        - **🔐 Authentication Testing**: Tries different authentication methods
+        - **📊 Detailed Diagnostics**: Complete logging of all API attempts
+        - **🛠️ Advanced Troubleshooting**: Step-by-step problem identification
+        - **📝 Manual Discovery**: Guided process for manual WordPress site entry
+        
+        ## 🎯 Perfect for:
+        - **A2 Hosting customers** (direct and reseller accounts)
+        - **Troubleshooting API issues** with comprehensive diagnostics
+        - **Server configuration analysis** and optimization
+        - **Manual WordPress site management** when automation fails
+        
+        ## 🔧 How to Use:
+        1. **Enter your cPanel credentials** (same as cPanel login)
+        2. **Enable server analysis** for comprehensive diagnostics
+        3. **Review analysis results** to understand your server configuration
+        4. **Let the tool discover WordPress sites** or add them manually
+        5. **Manage your WordPress installations** with confidence
+        """)
+    
     st.markdown("---")
-    st.caption("🏢 **Optimized for A2 Hosting** - Works with direct A2 accounts and reseller accounts")
-    st.caption("✨ **Enhanced with Comprehensive Audit Logging**")
-    st.caption("🔐 **Security & Compliance Ready**")
-    st.caption("📋 **Complete Activity Tracking & Monitoring**")
-    st.caption("🔗 Uses A2 Hosting's Softaculous WordPress Manager API")
-    st.caption("💾 **Audit logs stored in ./logs/ directory**")
-    st.caption("📞 **A2 Hosting Support:** support@a2hosting.com")
+    
+    # Main application logic
+    if 'credentials' not in st.session_state:
+        show_enhanced_login_screen()
+    else:
+        show_enhanced_main_app()
+
+if __name__ == "__main__":
+    main()
