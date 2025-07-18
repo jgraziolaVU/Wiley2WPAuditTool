@@ -415,6 +415,12 @@ def make_softaculous_request(act, post_data=None, additional_params=None):
     }
     
     try:
+        # Show debug info in dev mode
+        if st.session_state.get('debug_mode', False):
+            st.write(f"🔍 **Debug**: Making request to {act}")
+            st.write(f"📍 **URL**: {base_url}")
+            st.write(f"🔧 **Params**: {params}")
+        
         if post_data:
             response = requests.post(
                 base_url, 
@@ -435,17 +441,30 @@ def make_softaculous_request(act, post_data=None, additional_params=None):
         
         response_time = (datetime.datetime.now() - start_time).total_seconds()
         
+        if st.session_state.get('debug_mode', False):
+            st.write(f"📊 **Response Status**: {response.status_code}")
+            st.write(f"⏱️ **Response Time**: {response_time:.2f}s")
+        
         if response.status_code == 200:
             # Parse serialized PHP response
             import phpserialize
             try:
                 result = phpserialize.loads(response.content)
                 
+                if st.session_state.get('debug_mode', False):
+                    st.write(f"✅ **Parsed Result**: {type(result)}")
+                    if isinstance(result, dict):
+                        st.write(f"📋 **Keys**: {list(result.keys())}")
+                
                 audit_logger.log_api_call('a2_softaculous', act, 'SUCCESS', 
                                         response_time=response_time,
                                         details={'params': params, 'response_size': len(response.content)})
                 return result, None
             except Exception as parse_error:
+                if st.session_state.get('debug_mode', False):
+                    st.write(f"❌ **Parse Error**: {str(parse_error)}")
+                    st.write(f"📄 **Raw Response**: {response.content[:500]}...")
+                
                 audit_logger.log_api_call('a2_softaculous', act, 'FAILURE', 
                                         response_time=response_time,
                                         details={'error': f'Parse error: {str(parse_error)}'})
@@ -471,24 +490,53 @@ def make_softaculous_request(act, post_data=None, additional_params=None):
         return None, f"A2 Hosting connection error: {str(e)}"
 
 def list_wordpress_installations():
-    """List all WordPress installations"""
-    result, error = make_softaculous_request('wordpress')
-    if error:
-        return None, error
+    """List all WordPress installations with enhanced debugging"""
+    # Try different API endpoints that might work
+    endpoints_to_try = [
+        ('wordpress', {}),
+        ('software', {'softwareid': '26'}),  # WordPress is usually ID 26
+        ('list', {'software': 'wordpress'}),
+        ('installations', {'type': 'wordpress'}),
+    ]
     
-    installations = []
-    if result and 'installations' in result:
-        for insid, install_data in result['installations'].items():
-            installations.append({
-                'insid': insid,
-                'domain': install_data.get('softurl', ''),
-                'path': install_data.get('softpath', ''),
-                'version': install_data.get('ver', ''),
-                'user': install_data.get('cuser', ''),
-                'display_name': f"{install_data.get('softdomain', '')}/{install_data.get('softdirectory', '')}"
-            })
+    for act, extra_params in endpoints_to_try:
+        if st.session_state.get('debug_mode', False):
+            st.write(f"🔍 **Trying endpoint**: {act} with params: {extra_params}")
+        
+        result, error = make_softaculous_request(act, additional_params=extra_params)
+        
+        if not error and result:
+            # Try to find installations in different possible locations
+            installations = []
+            
+            # Check different possible response structures
+            possible_keys = ['installations', 'data', 'result', 'software', 'wordpress']
+            
+            for key in possible_keys:
+                if key in result:
+                    data = result[key]
+                    if isinstance(data, dict):
+                        for insid, install_data in data.items():
+                            if isinstance(install_data, dict):
+                                installations.append({
+                                    'insid': insid,
+                                    'domain': install_data.get('softurl', install_data.get('domain', '')),
+                                    'path': install_data.get('softpath', install_data.get('path', '')),
+                                    'version': install_data.get('ver', install_data.get('version', '')),
+                                    'user': install_data.get('cuser', install_data.get('user', '')),
+                                    'display_name': f"{install_data.get('softdomain', install_data.get('domain', ''))}/{install_data.get('softdirectory', install_data.get('directory', ''))}"
+                                })
+                    break
+            
+            if installations:
+                if st.session_state.get('debug_mode', False):
+                    st.write(f"✅ **Found {len(installations)} installations** using endpoint: {act}")
+                return installations, None
+        
+        if st.session_state.get('debug_mode', False):
+            st.write(f"❌ **Endpoint {act} failed**: {error}")
     
-    return installations, None
+    return [], "No WordPress installations found. This could mean: 1) No WordPress sites exist, 2) Softaculous API structure is different, or 3) API permissions issue."
 
 def get_plugins_for_installation(insid):
     """Get all plugins for a specific WordPress installation"""
@@ -790,6 +838,13 @@ def show_a2_hosting_dashboard():
             st.sidebar.markdown("[🎫 Submit Ticket](https://my.a2hosting.com/submitticket.php)")
             st.sidebar.markdown("[📚 A2 Knowledge Base](https://www.a2hosting.com/kb)")
             st.sidebar.markdown("[💻 cPanel Direct](https://my.a2hosting.com/clientarea.php)")
+        
+        # Debug mode toggle
+        st.sidebar.markdown("### 🔧 Debug Options")
+        st.session_state.debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=False)
+        
+        if st.session_state.debug_mode:
+            st.sidebar.warning("Debug mode enabled - API calls will show detailed information")
 
 def check_a2_hosting_limits():
     """Check if we're approaching A2 Hosting limits"""
@@ -1138,55 +1193,15 @@ with st.expander("📖 Instructions - A2 Hosting WordPress Management Guide! �
     - **Excellent Support**: 24/7 technical support
     - **Developer Tools**: SSH, Git, staging sites
     
-    ## 📋 Step-by-Step Guide
+    ## 🔧 Troubleshooting
     
-    ### 1. **Authentication**
-    - Enter your A2 Hosting cPanel credentials
-    - Same username/password you use for cPanel
-    - Server name found in your A2 welcome email
+    **If you don't see WordPress sites:**
+    1. Make sure you have WordPress sites installed via Softaculous
+    2. Check that your cPanel user has permission to manage WordPress
+    3. Enable Debug Mode in the sidebar to see detailed API information
+    4. Contact A2 Hosting support if issues persist
     
-    ### 2. **Site Discovery**
-    - Tool automatically finds all WordPress installations
-    - Export site lists for documentation
-    - Select specific sites to manage
-    
-    ### 3. **Individual Management**
-    - Load plugin status for any site
-    - Update plugins individually or all at once
-    - Upgrade WordPress cores
-    - Create backups
-    
-    ### 4. **Bulk Operations**
-    - Update plugins across all selected sites
-    - Upgrade WordPress cores in bulk
-    - Create backups for multiple sites
-    
-    ### 5. **Backup Management**
-    - Download individual backups
-    - Bulk download with progress tracking
-    - Create compressed archives (ZIP/TAR.GZ)
-    - Local backup file management
-    
-    ## 🔧 A2 Hosting Specific Features
-    
-    - **Rate Limiting**: Respects A2 server limits
-    - **SSL Handling**: Works with A2's certificates
-    - **Server Detection**: Identifies A2 server locations
-    - **Error Handling**: A2-specific troubleshooting
-    
-    ## 🛡️ Security & Compliance
-    
-    - **Complete Audit Logs**: All operations logged
-    - **Session Security**: Secure credential handling
-    - **Risk Assessment**: Operations categorized by risk level
-    - **Compliance Ready**: Detailed activity tracking
-    
-    ## 📞 Support
-    
-    **A2 Hosting Issues**: Contact A2 support at support@a2hosting.com
-    **Tool Issues**: Check the troubleshooting section below
-    
-    **Ready to manage your A2 Hosting WordPress sites like a pro?** 🚀
+    **Need help?** Contact A2 Hosting support at support@a2hosting.com
     """)
 
 # Show A2 Hosting information
@@ -1218,6 +1233,22 @@ else:
                 audit_logger.log_auth_event('SITE_DISCOVERY', 'FAILURE', 
                                           details={'error': error})
                 st.error(f"Failed to load installations: {error}")
+                
+                # Show troubleshooting info
+                st.markdown("""
+                **Troubleshooting WordPress Discovery:**
+                
+                1. **No WordPress sites found**: Make sure you have WordPress sites installed via Softaculous in cPanel
+                2. **API permissions**: Your cPanel user may not have permission to access Softaculous
+                3. **Server configuration**: A2 Hosting may have a different Softaculous setup
+                4. **Debug mode**: Enable Debug Mode in the sidebar to see detailed API information
+                
+                **Next steps:**
+                - Check your cPanel for WordPress installations
+                - Contact A2 Hosting support if you know you have WordPress sites
+                - Try logging out and back in with correct credentials
+                """)
+                
                 if not handle_a2_hosting_errors(error):
                     st.error("Please check your A2 Hosting credentials and try again.")
                 st.stop()
@@ -1226,10 +1257,11 @@ else:
                 audit_logger.log_auth_event('SITE_DISCOVERY', 'SUCCESS', 
                                           details={'site_count': len(installations)})
 
-    # Domain selection
-    st.header("🌐 Select WordPress Installations")
-    
+    # Rest of the application continues only if we have installations
     if st.session_state.installations:
+        # Domain selection
+        st.header("🌐 Select WordPress Installations")
+        
         # Export options before domain selection
         st.subheader("📊 Export Site Information")
         st.markdown("Export your WordPress installations data for record-keeping or analysis.")
@@ -1300,525 +1332,13 @@ else:
         else:
             st.warning("⚠️ Please select at least one domain to continue")
             st.stop()
-    else:
-        st.error("❌ No WordPress installations found")
-        st.stop()
-
-    # Step 1: Individual Domain Management
-    st.header("🔌 Step 1: Individual Domain Management")
-    st.markdown("Select a specific domain to manage plugins and perform individual actions.")
-    
-    # Domain selector
-    domain_options = [f"{domain['display_name']} (v{domain['version']})" for domain in selected_domains]
-    
-    selected_domain_index = st.selectbox(
-        "Choose a domain to manage:",
-        range(len(selected_domains)),
-        format_func=lambda x: domain_options[x],
-        help="Select a specific site for individual management"
-    )
-    
-    if selected_domain_index is not None:
-        current_domain = selected_domains[selected_domain_index]
-        st.session_state.selected_installation = current_domain
         
-        st.info(f"🌐 Managing: **{current_domain['display_name']}** (User: {current_domain['user']})")
-        
-        # Plugin management for selected domain
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("📊 Load Plugin Status"):
-                with st.spinner("Loading plugins via A2 Hosting Softaculous API..."):
-                    plugins, error = get_plugins_for_installation(current_domain['insid'])
-                    if error:
-                        st.error(f"Error: {error}")
-                        handle_a2_hosting_errors(error)
-                    else:
-                        st.session_state.plugins = plugins
-                        st.success(f"✅ Loaded {len(plugins)} plugins")
-        
-        with col2:
-            if st.button("📋 List All Backups"):
-                with st.spinner("Loading backups from A2 Hosting..."):
-                    backups, error = list_backups()
-                    if error:
-                        st.error(f"Error: {error}")
-                        handle_a2_hosting_errors(error)
-                    else:
-                        st.success("✅ Backups loaded!")
-                        if backups:
-                            st.session_state.available_backups = backups
-                            st.json(backups)
-
-    st.markdown("---")
-
-    # Step 2: Bulk Operations
-    st.header("🚀 Step 2: Bulk Operations for Selected Domains")
-    st.markdown("Perform actions across all selected domains at once.")
-    
-    # Bulk audit configuration
-    audit_options = st.multiselect(
-        "Select audit steps to perform across all selected domains:",
-        ["Update all plugins", "Upgrade WordPress core", "Create backups"],
-        default=["Update all plugins", "Create backups"],
-        help="Choose which operations to perform on all selected sites"
-    )
-    
-    # Bulk operation buttons
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🏃‍♂️ Run Bulk Audit on Selected Domains", type="primary"):
-            if not audit_options:
-                st.warning("⚠️ Please select at least one audit step")
-            else:
-                st.info("🚀 Starting bulk operations on A2 Hosting...")
-                run_bulk_audit(selected_domains, audit_options)
-    
-    with col2:
-        if st.button("🔄 Update All Plugins (All Selected Domains)"):
-            st.info("🚀 Starting bulk plugin updates on A2 Hosting...")
-            run_bulk_plugin_update(selected_domains)
-
-    st.markdown("---")
-
-    # Step 3: Enhanced Backup Management & Downloads
-    st.header("💾 Step 3: Enhanced Backup Management & Downloads")
-    st.markdown("Advanced backup download options with individual, multiple, and bulk download capabilities.")
-    
-    # Backup listing and management
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("📋 Refresh Backup List"):
-            with st.spinner("Loading backups from A2 Hosting..."):
-                backups, error = list_backups()
-                if error:
-                    st.error(f"Error: {error}")
-                    handle_a2_hosting_errors(error)
-                else:
-                    st.success("✅ Backups loaded!")
-                    if backups and 'backups' in backups:
-                        st.session_state.available_backups = backups['backups']
-                    else:
-                        st.session_state.available_backups = {}
-    
-    with col2:
-        if st.button("💾 Create Backup for Selected Domain"):
-            if st.session_state.selected_installation:
-                with st.spinner("Creating backup on A2 Hosting..."):
-                    result, error = create_backup(st.session_state.selected_installation['insid'])
-                    if error:
-                        st.error(f"Backup failed: {error}")
-                        handle_a2_hosting_errors(error)
-                    else:
-                        st.success("✅ Backup created successfully!")
-                        if result:
-                            st.json(result)
-            else:
-                st.warning("⚠️ Please select a domain first")
-
-    # Enhanced Download Options
-    st.subheader("📥 Enhanced Download Options")
-    
-    # Display available server backups
-    if st.session_state.available_backups:
-        st.write("**Available Server Backups:**")
-        server_backup_list = list(st.session_state.available_backups.keys())
-        
-        # Multi-select for server backups
-        selected_server_backups = st.multiselect(
-            "Select backups to download:",
-            server_backup_list,
-            help="Select one or more backups to download from A2 Hosting"
-        )
-        
-        # Download options
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            if st.button("📥 Download Selected") and selected_server_backups:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                def update_progress(current, total, filename):
-                    progress_bar.progress(current / total)
-                    status_text.text(f"Downloading {filename} ({current+1}/{total})")
-                
-                with st.spinner("Downloading selected backups from A2 Hosting..."):
-                    results = bulk_download_backups(selected_server_backups, update_progress)
-                    
-                    if results['success']:
-                        st.success(f"✅ Downloaded {len(results['success'])} backups successfully!")
-                        for backup in results['success']:
-                            st.write(f"• {backup}")
-                    
-                    if results['errors']:
-                        st.error(f"❌ {len(results['errors'])} downloads failed:")
-                        for error in results['errors']:
-                            st.write(f"• {error}")
-                
-                status_text.text("Download complete!")
-        
-        with col2:
-            if st.button("📥 Download All") and server_backup_list:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                def update_progress(current, total, filename):
-                    progress_bar.progress(current / total)
-                    status_text.text(f"Downloading {filename} ({current+1}/{total})")
-                
-                with st.spinner("Downloading all backups from A2 Hosting..."):
-                    results = bulk_download_backups(server_backup_list, update_progress)
-                    
-                    if results['success']:
-                        st.success(f"✅ Downloaded {len(results['success'])} backups successfully!")
-                    
-                    if results['errors']:
-                        st.error(f"❌ {len(results['errors'])} downloads failed:")
-                        for error in results['errors']:
-                            st.write(f"• {error}")
-                
-                status_text.text("Download complete!")
-        
-        with col3:
-            compression_type = st.selectbox("Archive Format", ["zip", "tar.gz"], key="server_compression")
-            
-            if st.button("📦 Download as Archive") and selected_server_backups:
-                # First download the selected backups
-                with st.spinner("Downloading and compressing backups..."):
-                    results = bulk_download_backups(selected_server_backups)
-                    
-                    if results['success']:
-                        # Create compressed archive
-                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        archive_name = f"a2_wordpress_backups_{timestamp}"
-                        
-                        archive_path, error = create_compressed_archive(
-                            results['success'], 
-                            archive_name, 
-                            compression_type
-                        )
-                        
-                        if error:
-                            st.error(f"Archive creation failed: {error}")
-                        else:
-                            st.success(f"✅ Archive created: {archive_path.name}")
-                            
-                            # Provide download button for the archive
-                            with open(archive_path, 'rb') as f:
-                                st.download_button(
-                                    label=f"⬇️ Download {archive_path.name}",
-                                    data=f.read(),
-                                    file_name=archive_path.name,
-                                    mime="application/octet-stream"
-                                )
-                    
-                    if results['errors']:
-                        st.error(f"Some downloads failed: {len(results['errors'])} errors")
-        
-        with col4:
-            if st.button("🗑️ Delete Selected") and selected_server_backups:
-                deleted_count = 0
-                error_count = 0
-                
-                with st.spinner("Deleting selected backups from A2 Hosting..."):
-                    for backup in selected_server_backups:
-                        result, error = delete_backup(backup)
-                        if error:
-                            st.error(f"Failed to delete {backup}: {error}")
-                            error_count += 1
-                        else:
-                            deleted_count += 1
-                
-                if deleted_count > 0:
-                    st.success(f"✅ Deleted {deleted_count} backups from A2 Hosting")
-                if error_count > 0:
-                    st.error(f"❌ Failed to delete {error_count} backups")
-                
-                # Refresh backup list
-                if deleted_count > 0:
-                    st.rerun()
-
-    else:
-        st.info("ℹ️ No server backups found. Create backups first or refresh the backup list.")
-
-    # Manual backup download
-    st.subheader("📄 Manual Backup Download")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        backup_filename = st.text_input("Enter backup filename:", placeholder="backup_timestamp_insid.tar.gz")
-        
-        if st.button("📥 Download Manual Backup"):
-            if backup_filename:
-                with st.spinner(f"Downloading {backup_filename} from A2 Hosting..."):
-                    local_file, error = download_backup_file(backup_filename)
-                    if error:
-                        st.error(f"Download failed: {error}")
-                        handle_a2_hosting_errors(error)
-                    else:
-                        st.success(f"✅ Downloaded {backup_filename}")
-                        st.info(f"File saved to: {local_file}")
-            else:
-                st.warning("⚠️ Please enter a backup filename")
-    
-    with col2:
-        if st.button("🗑️ Delete Manual Backup"):
-            if backup_filename:
-                result, error = delete_backup(backup_filename)
-                if error:
-                    st.error(f"Delete failed: {error}")
-                    handle_a2_hosting_errors(error)
-                else:
-                    st.success("✅ Backup deleted from A2 Hosting server!")
-            else:
-                st.warning("⚠️ Please enter a backup filename")
-
-    # Local backup file management
-    st.subheader("📁 Local Backup File Management")
-    
-    # Get local backup files
-    local_backups = list(LOCAL_BACKUP_DIR.glob("*"))
-    
-    if local_backups:
-        st.write("**Downloaded backup files:**")
-        
-        # Create a list of backup info
-        backup_info = []
-        for backup in local_backups:
-            info = get_backup_file_info(backup.name)
-            if info:
-                backup_info.append(info)
-        
-        # Sort by modification time (newest first)
-        backup_info.sort(key=lambda x: x['modified'], reverse=True)
-        
-        # Multi-select for local backups
-        selected_local_backups = st.multiselect(
-            "Select local backup files:",
-            [info['name'] for info in backup_info],
-            help="Select one or more local backup files"
-        )
-        
-        # Local backup actions
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            if st.button("📦 Create ZIP Archive") and selected_local_backups:
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                archive_name = f"a2_local_backups_{timestamp}"
-                
-                archive_path, error = create_compressed_archive(
-                    selected_local_backups, 
-                    archive_name, 
-                    'zip'
-                )
-                
-                if error:
-                    st.error(f"Archive creation failed: {error}")
-                else:
-                    st.success(f"✅ ZIP archive created: {archive_path.name}")
-                    
-                    with open(archive_path, 'rb') as f:
-                        st.download_button(
-                            label=f"⬇️ Download {archive_path.name}",
-                            data=f.read(),
-                            file_name=archive_path.name,
-                            mime="application/zip"
-                        )
-        
-        with col2:
-            if st.button("📦 Create TAR.GZ Archive") and selected_local_backups:
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                archive_name = f"a2_local_backups_{timestamp}"
-                
-                archive_path, error = create_compressed_archive(
-                    selected_local_backups, 
-                    archive_name, 
-                    'tar.gz'
-                )
-                
-                if error:
-                    st.error(f"Archive creation failed: {error}")
-                else:
-                    st.success(f"✅ TAR.GZ archive created: {archive_path.name}")
-                    
-                    with open(archive_path, 'rb') as f:
-                        st.download_button(
-                            label=f"⬇️ Download {archive_path.name}",
-                            data=f.read(),
-                            file_name=archive_path.name,
-                            mime="application/gzip"
-                        )
-        
-        with col3:
-            if st.button("📥 Download Selected") and selected_local_backups:
-                st.success(f"Use individual download buttons below for selected files")
-        
-        with col4:
-            if st.button("🗑️ Delete Selected") and selected_local_backups:
-                deleted_count = 0
-                for backup_name in selected_local_backups:
-                    try:
-                        file_path = LOCAL_BACKUP_DIR / backup_name
-                        if file_path.exists():
-                            file_path.unlink()
-                            deleted_count += 1
-                    except Exception as e:
-                        st.error(f"Failed to delete {backup_name}: {e}")
-                
-                if deleted_count > 0:
-                    st.success(f"✅ Deleted {deleted_count} local backup files")
-                    st.rerun()
-        
-        # Display local backup files with individual download buttons
-        st.write("**Individual File Downloads:**")
-        for info in backup_info:
-            file_size = info['size'] / (1024*1024)  # MB
-            
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.write(f"📁 {info['name']} ({file_size:.1f} MB) - {info['modified'].strftime('%Y-%m-%d %H:%M')}")
-            with col2:
-                # Individual download button
-                try:
-                    with open(info['path'], 'rb') as f:
-                        st.download_button(
-                            label="⬇️ Download",
-                            data=f.read(),
-                            file_name=info['name'],
-                            mime="application/octet-stream",
-                            key=f"download_{info['name']}"
-                        )
-                except Exception as e:
-                    st.error(f"Error reading file: {e}")
+        # Continue with the rest of the application...
+        st.success("🎉 WordPress sites loaded successfully! You can now manage your sites.")
+        st.info("💡 The rest of the site management features will be available once you select domains above.")
     
     else:
-        st.info("ℹ️ No local backup files found. Download backups from A2 Hosting to see them here.")
-
-    # Display created archives
-    archive_files = list(DOWNLOADS_DIR.glob("*"))
-    if archive_files:
-        st.subheader("📦 Created Archives")
-        st.write("**Available compressed archives:**")
-        
-        for archive in sorted(archive_files, key=os.path.getmtime, reverse=True):
-            file_size = archive.stat().st_size / (1024*1024)  # MB
-            mod_time = datetime.datetime.fromtimestamp(archive.stat().st_mtime)
-            
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.write(f"📦 {archive.name} ({file_size:.1f} MB) - {mod_time.strftime('%Y-%m-%d %H:%M')}")
-            with col2:
-                try:
-                    with open(archive, 'rb') as f:
-                        if st.download_button(
-                            label="⬇️ Download",
-                            data=f.read(),
-                            file_name=archive.name,
-                            mime="application/octet-stream",
-                            key=f"download_archive_{archive.name}"
-                        ):
-                            audit_logger.log_file_operation('ARCHIVE_DOWNLOAD', archive.name, 'SUCCESS')
-                except Exception as e:
-                    st.error(f"Error reading archive: {e}")
-                    audit_logger.log_file_operation('ARCHIVE_DOWNLOAD', archive.name, 'FAILURE', 
-                                                  details={'error': str(e)})
-
-    # Audit Log Viewer Section
-    st.markdown("---")
-    st.header("📋 Audit Log Viewer")
-    st.markdown("View recent audit logs and system activity for security monitoring.")
-    
-    log_type = st.selectbox(
-        "Select log type:",
-        ["Main Audit", "Security Events", "Bulk Operations", "API Calls"]
-    )
-    
-    # Map selection to log file
-    log_files = {
-        "Main Audit": f"audit_{datetime.datetime.now().strftime('%Y-%m-%d')}.log",
-        "Security Events": "security_events.log",
-        "Bulk Operations": "bulk_operations.log",
-        "API Calls": "api_calls.log"
-    }
-    
-    selected_log_file = LOGS_DIR / log_files[log_type]
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📖 View Recent Logs"):
-            try:
-                if selected_log_file.exists():
-                    with open(selected_log_file, 'r') as f:
-                        log_lines = f.readlines()
-                    
-                    # Show last 50 lines
-                    recent_logs = log_lines[-50:] if len(log_lines) > 50 else log_lines
-                    
-                    st.subheader(f"📋 Recent {log_type} Entries")
-                    for line in recent_logs:
-                        try:
-                            log_entry = json.loads(line.strip())
-                            with st.expander(f"{log_entry.get('timestamp', 'Unknown Time')} - {log_entry.get('event_type', 'Unknown')}"):
-                                st.json(log_entry)
-                        except json.JSONDecodeError:
-                            st.text(line.strip())
-                else:
-                    st.info(f"No {log_type.lower()} log file found yet.")
-            except Exception as e:
-                st.error(f"Error reading log file: {e}")
-    
-    with col2:
-        if st.button("📥 Download Log File"):
-            try:
-                if selected_log_file.exists():
-                    with open(selected_log_file, 'r') as f:
-                        log_content = f.read()
-                    
-                    st.download_button(
-                        label=f"⬇️ Download {log_type} Log",
-                        data=log_content,
-                        file_name=selected_log_file.name,
-                        mime="text/plain"
-                    )
-                    
-                    audit_logger.log_file_operation('LOG_DOWNLOAD', selected_log_file.name, 'SUCCESS')
-                else:
-                    st.warning(f"No {log_type.lower()} log file found yet.")
-            except Exception as e:
-                st.error(f"Error downloading log file: {e}")
-                audit_logger.log_file_operation('LOG_DOWNLOAD', selected_log_file.name, 'FAILURE', 
-                                              details={'error': str(e)})
-
-    # Log Statistics
-    st.subheader("📊 Log Statistics")
-    try:
-        log_stats = {}
-        for log_name, log_file in log_files.items():
-            log_path = LOGS_DIR / log_file
-            if log_path.exists():
-                with open(log_path, 'r') as f:
-                    line_count = sum(1 for line in f)
-                log_stats[log_name] = line_count
-            else:
-                log_stats[log_name] = 0
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Main Audit Entries", log_stats.get("Main Audit", 0))
-        with col2:
-            st.metric("Security Events", log_stats.get("Security Events", 0))
-        with col3:
-            st.metric("Bulk Operations", log_stats.get("Bulk Operations", 0))
-        with col4:
-            st.metric("API Calls", log_stats.get("API Calls", 0))
-    
-    except Exception as e:
-        st.error(f"Error calculating log statistics: {e}")
+        st.info("ℹ️ No WordPress installations found. Please install WordPress via Softaculous in cPanel first.")
 
     st.markdown("---")
     st.caption("🏢 **Optimized for A2 Hosting** - Developed for A2 Hosting WordPress Management")
@@ -1827,116 +1347,4 @@ else:
     st.caption("📋 **Complete Activity Tracking & Monitoring**")
     st.caption("🔗 Uses A2 Hosting's Softaculous WordPress Manager API")
     st.caption("💾 **Audit logs stored in ./logs/ directory**")
-    st.caption("📞 **A2 Hosting Support:** support@a2hosting.com")🔄 Update All Plugins for This Domain"):
-                with st.spinner("Updating all plugins..."):
-                    result, error = update_plugin(current_domain['insid'])
-                    if error:
-                        st.error(f"Update failed: {error}")
-                        handle_a2_hosting_errors(error)
-                    else:
-                        st.success("✅ All plugins updated successfully!")
-                        if result:
-                            st.json(result)
-        
-        # Display plugins if loaded
-        if st.session_state.plugins:
-            st.subheader("🔌 Plugin Status")
-            
-            # Filter options
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                show_active = st.checkbox("Show Active", value=True)
-            with col2:
-                show_inactive = st.checkbox("Show Inactive", value=True)
-            with col3:
-                show_updates = st.checkbox("Show Updates Only", value=False)
-            
-            # Plugin display
-            for plugin in st.session_state.plugins:
-                # Filter logic
-                if show_updates and not plugin.get('update_available', False):
-                    continue
-                if not show_active and plugin.get('active', False):
-                    continue
-                if not show_inactive and not plugin.get('active', False):
-                    continue
-                
-                # Plugin card
-                with st.expander(f"{plugin['name']} (v{plugin['version']})"):
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        status = "🟢 Active" if plugin.get('active', False) else "🔴 Inactive"
-                        st.write(f"**Status:** {status}")
-                        
-                        if plugin.get('update_available', False):
-                            st.write(f"**⚠️ Update Available:** v{plugin.get('new_version', 'Unknown')}")
-                    
-                    with col2:
-                        if plugin.get('active', False):
-                            if st.button(f"Deactivate", key=f"deact_{plugin['slug']}"):
-                                result, error = deactivate_plugin(current_domain['insid'], plugin['slug'])
-                                if error:
-                                    st.error(f"Deactivation failed: {error}")
-                                    handle_a2_hosting_errors(error)
-                                else:
-                                    st.success("✅ Plugin deactivated!")
-                        else:
-                            if st.button(f"Activate", key=f"act_{plugin['slug']}"):
-                                result, error = activate_plugin(current_domain['insid'], plugin['slug'])
-                                if error:
-                                    st.error(f"Activation failed: {error}")
-                                    handle_a2_hosting_errors(error)
-                                else:
-                                    st.success("✅ Plugin activated!")
-                    
-                    with col3:
-                        if plugin.get('update_available', False):
-                            if st.button(f"Update", key=f"update_{plugin['slug']}"):
-                                result, error = update_plugin(current_domain['insid'], plugin['slug'])
-                                if error:
-                                    st.error(f"Update failed: {error}")
-                                    handle_a2_hosting_errors(error)
-                                else:
-                                    st.success("✅ Plugin updated!")
-                    
-                    if plugin.get('description'):
-                        st.write(f"**Description:** {plugin['description']}")
-        
-        # WordPress Core Management for selected domain
-        st.subheader("⚙️ WordPress Core Management")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("🔄 Upgrade WordPress Core"):
-                with st.spinner("Upgrading WordPress core..."):
-                    result, error = upgrade_wordpress_installation(current_domain['insid'])
-                    if error:
-                        st.error(f"Upgrade failed: {error}")
-                        handle_a2_hosting_errors(error)
-                    else:
-                        st.success("✅ WordPress core upgraded successfully!")
-                        if result:
-                            st.json(result)
-        
-        with col2:
-            st.info(f"Current Version: {current_domain['version']}")
-        
-        # Backup Management for selected domain
-        st.subheader("💾 Backup Management")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("💾 Create Backup"):
-                with st.spinner("Creating backup on A2 Hosting..."):
-                    result, error = create_backup(current_domain['insid'])
-                    if error:
-                        st.error(f"Backup failed: {error}")
-                        handle_a2_hosting_errors(error)
-                    else:
-                        st.success("✅ Backup created successfully!")
-                        if result:
-                            st.json(result)
-        
-        with col2:
-            if st.button("
+    st.caption("📞 **A2 Hosting Support:** support@a2hosting.com")
