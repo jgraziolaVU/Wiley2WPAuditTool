@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
 import requests
 import os
@@ -17,6 +18,7 @@ import hashlib
 import threading
 import time
 import base64
+import xml.etree.ElementTree as ET
 import re
 from urllib.parse import urlparse
 import warnings
@@ -24,6 +26,9 @@ import warnings
 # Suppress SSL warnings for self-signed certificates (common with hosting providers)
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Also suppress Python warnings
+warnings.filterwarnings('ignore', category=urllib3.exceptions.InsecureRequestWarning)
 
 # Configuration
 LOCAL_BACKUP_DIR = Path("./backups")
@@ -78,11 +83,11 @@ class SimpleLogger:
         # Also show in debug mode
         if st.session_state.get('debug_mode', False):
             if level == 'ERROR':
-                st.error(f"🔍 **Debug Log**: {message}")
+                st.error(f"Debug Log: {message}")
             elif level == 'INFO':
-                st.info(f"🔍 **Debug Log**: {message}")
+                st.info(f"Debug Log: {message}")
             else:
-                st.write(f"🔍 **Debug Log**: {message}")
+                st.write(f"Debug Log: {message}")
 
 # Global logger
 logger = SimpleLogger()
@@ -235,7 +240,7 @@ def make_softaculous_request(act, post_data=None, additional_params=None):
     total_combinations = len(paths) * len(formats) * len(auth_methods)
     
     if st.session_state.get('debug_mode', False):
-        st.write(f"🔍 **Testing {total_combinations} Softaculous API combinations...**")
+        st.write(f"Testing {total_combinations} Softaculous API combinations...")
     
     attempt = 0
     for path in paths:
@@ -244,7 +249,7 @@ def make_softaculous_request(act, post_data=None, additional_params=None):
                 attempt += 1
                 
                 if st.session_state.get('debug_mode', False):
-                    st.write(f"🔍 **Attempt {attempt}/{total_combinations}**: `{path}` + `{api_format}` + `{auth_method}`")
+                    st.write(f"Attempt {attempt}/{total_combinations}: {path} + {api_format} + {auth_method}")
                 
                 result, error = make_single_softaculous_request(
                     creds, act, path, api_format, auth_method, post_data, additional_params
@@ -259,7 +264,7 @@ def make_softaculous_request(act, post_data=None, additional_params=None):
                     }
                     
                     if st.session_state.get('debug_mode', False):
-                        st.success(f"✅ **Found working configuration!** Path: `{path}`, Format: `{api_format}`, Auth: `{auth_method}`")
+                        st.success(f"Found working configuration! Path: {path}, Format: {api_format}, Auth: {auth_method}")
                     
                     logger.log('INFO', f"Working Softaculous config found", {
                         'path': path, 'format': api_format, 'auth': auth_method
@@ -269,7 +274,7 @@ def make_softaculous_request(act, post_data=None, additional_params=None):
                 
                 # Show error for debug mode
                 if st.session_state.get('debug_mode', False):
-                    st.write(f"❌ **Failed**: {error}")
+                    st.write(f"Failed: {error}")
     
     # All combinations failed
     error_msg = f"All {total_combinations} Softaculous API combinations failed"
@@ -309,8 +314,8 @@ def make_single_softaculous_request(creds, act, path, api_format, auth_method, p
         analysis, analysis_message = analyze_softaculous_response(response)
         
         if st.session_state.get('debug_mode', False):
-            st.write(f"📊 **Response Analysis**: {analysis_message}")
-            st.write(f"📋 **Details**: Status {analysis['status_code']}, {analysis['content_length']} bytes")
+            st.write(f"Response Analysis: {analysis_message}")
+            st.write(f"Details: Status {analysis['status_code']}, {analysis['content_length']} bytes")
         
         # Try to parse if response looks good
         if response.status_code == 200 and not analysis['is_html']:
@@ -348,7 +353,7 @@ def discover_wordpress_installations():
     """Discover WordPress installations using various Softaculous endpoints"""
     
     if st.session_state.get('debug_mode', False):
-        st.write("🔍 **Starting WordPress installation discovery...**")
+        st.write("Starting WordPress installation discovery...")
     
     # Try different Softaculous actions that might return WordPress installations
     endpoints_to_try = [
@@ -365,7 +370,7 @@ def discover_wordpress_installations():
     
     for act, params in endpoints_to_try:
         if st.session_state.get('debug_mode', False):
-            st.write(f"🔍 **Trying endpoint**: `{act}` with params: `{params}`")
+            st.write(f"Trying endpoint: {act} with params: {params}")
         
         result, error = make_softaculous_request(act, additional_params=params)
         
@@ -376,12 +381,12 @@ def discover_wordpress_installations():
                 return installations, None
             
             if st.session_state.get('debug_mode', False):
-                st.write(f"📋 **Endpoint `{act}` returned data but no installations found**")
+                st.write(f"Endpoint {act} returned data but no installations found")
                 if isinstance(result, dict):
-                    st.write(f"🔑 **Keys found**: {list(result.keys())[:10]}")
+                    st.write(f"Keys found: {list(result.keys())[:10]}")
         
         elif st.session_state.get('debug_mode', False):
-            st.write(f"❌ **Endpoint `{act}` failed**: {error}")
+            st.write(f"Endpoint {act} failed: {error}")
     
     return [], "No WordPress installations found via Softaculous API"
 
@@ -460,7 +465,7 @@ def parse_installation_data(install_id, data):
 def show_manual_entry_form():
     """Show form for manually entering WordPress sites"""
     
-    st.subheader("📝 Manual WordPress Site Entry")
+    st.subheader("Manual WordPress Site Entry")
     st.markdown("**Can't find your WordPress sites automatically? Add them manually:**")
     
     with st.form("manual_wordpress_entry"):
@@ -474,7 +479,7 @@ def show_manual_entry_form():
             version = st.text_input("WordPress Version", placeholder="6.4")
             notes = st.text_input("Notes", placeholder="Optional notes")
         
-        if st.form_submit_button("➕ Add WordPress Site"):
+        if st.form_submit_button("Add WordPress Site"):
             if domain:
                 if 'manual_installations' not in st.session_state:
                     st.session_state.manual_installations = []
@@ -491,14 +496,14 @@ def show_manual_entry_form():
                 }
                 
                 st.session_state.manual_installations.append(installation)
-                st.success(f"✅ Added: {installation['display_name']}")
+                st.success(f"Added: {installation['display_name']}")
                 logger.log('INFO', f"Manual WordPress site added: {installation['display_name']}")
             else:
-                st.error("❌ Please enter a domain name")
+                st.error("Please enter a domain name")
     
     # Show manually added sites
     if st.session_state.get('manual_installations'):
-        st.subheader("📋 Manually Added Sites")
+        st.subheader("Manually Added Sites")
         
         for i, site in enumerate(st.session_state.manual_installations):
             col1, col2, col3 = st.columns([3, 1, 1])
@@ -506,28 +511,28 @@ def show_manual_entry_form():
             with col1:
                 st.write(f"**{site['display_name']}** (v{site['version']})")
                 if site.get('notes'):
-                    st.write(f"📝 {site['notes']}")
+                    st.write(f"Notes: {site['notes']}")
             
             with col2:
                 test_url = f"https://{site['domain']}{site['path']}wp-admin/"
-                st.markdown(f"[🔗 Test]({test_url})")
+                st.markdown(f"[Test]({test_url})")
             
             with col3:
-                if st.button("🗑️", key=f"remove_{i}"):
+                if st.button("Remove", key=f"remove_{i}"):
                     st.session_state.manual_installations.pop(i)
                     st.rerun()
         
-        if st.button("✅ Use These Sites"):
+        if st.button("Use These Sites"):
             st.session_state.installations = st.session_state.manual_installations.copy()
-            st.success(f"✅ Using {len(st.session_state.manual_installations)} manually added sites!")
+            st.success(f"Using {len(st.session_state.manual_installations)} manually added sites!")
             st.rerun()
 
 def show_comprehensive_troubleshooting():
     """Show comprehensive troubleshooting guide"""
     
-    with st.expander("🛠️ Comprehensive Troubleshooting Guide", expanded=True):
+    with st.expander("Comprehensive Troubleshooting Guide", expanded=True):
         st.markdown("""
-        ## 🔍 **Step-by-Step WordPress Discovery**
+        ## Step-by-Step WordPress Discovery
         
         ### **Method 1: Check cPanel Directly**
         1. **Log into your cPanel** (same credentials as here)
@@ -570,14 +575,14 @@ def show_comprehensive_troubleshooting():
 def show_login_screen():
     """Enhanced login screen with better error handling"""
     
-    st.title("🔐 A2 Hosting WordPress Manager")
+    st.title("A2 Hosting WordPress Manager")
     st.markdown("### Enhanced WordPress Management for A2 Hosting & Resellers")
     
     # Quick info about the tool
-    st.info("💡 **Enhanced Version**: Includes comprehensive diagnostics and manual entry options for maximum compatibility")
+    st.info("Enhanced Version: Includes comprehensive diagnostics and manual entry options for maximum compatibility")
     
     with st.form("login_form"):
-        st.subheader("📋 cPanel Login Credentials")
+        st.subheader("cPanel Login Credentials")
         
         col1, col2 = st.columns(2)
         
@@ -598,7 +603,7 @@ def show_login_screen():
             password = st.text_input("Password", type="password")
         
         # Options
-        st.subheader("🔧 Options")
+        st.subheader("Options")
         col1, col2 = st.columns(2)
         
         with col1:
@@ -607,9 +612,9 @@ def show_login_screen():
         with col2:
             rate_limits = st.checkbox("Respect rate limits", value=True, help="Add delays between API calls")
         
-        if st.form_submit_button("🔍 Connect & Discover WordPress Sites", type="primary"):
+        if st.form_submit_button("Connect & Discover WordPress Sites", type="primary"):
             if not all([host, user, password]):
-                st.error("❌ Please fill in all credentials")
+                st.error("Please fill in all credentials")
                 return
             
             # Store credentials
@@ -619,11 +624,11 @@ def show_login_screen():
             st.session_state.debug_mode = debug_mode
             
             # Test connectivity
-            with st.spinner("🔍 Testing server connectivity..."):
+            with st.spinner("Testing server connectivity..."):
                 connectivity_ok, connectivity_msg = test_server_connectivity(host, port)
                 
                 if not connectivity_ok:
-                    st.error(f"❌ **Connectivity Failed**: {connectivity_msg}")
+                    st.error(f"**Connectivity Failed**: {connectivity_msg}")
                     st.markdown("""
                     **Possible issues:**
                     - Incorrect hostname or port
@@ -637,14 +642,14 @@ def show_login_screen():
                     """)
                     return
                 
-                st.success("✅ Server connectivity OK")
+                st.success("Server connectivity OK")
             
             # Test authentication
-            with st.spinner("🔐 Testing cPanel authentication..."):
+            with st.spinner("Testing cPanel authentication..."):
                 auth_ok, auth_msg = test_cpanel_authentication(host, port, user, password)
                 
                 if not auth_ok:
-                    st.error(f"❌ **Authentication Failed**: {auth_msg}")
+                    st.error(f"**Authentication Failed**: {auth_msg}")
                     st.markdown("""
                     **Possible issues:**
                     - Incorrect username or password
@@ -658,11 +663,11 @@ def show_login_screen():
                     """)
                     return
                 
-                st.success("✅ cPanel authentication OK")
+                st.success("cPanel authentication OK")
             
             # Success - proceed to main app
             logger.log('INFO', f"Successful login for {user}@{host}:{port}")
-            st.success("🎉 Login successful! Proceeding to WordPress discovery...")
+            st.success("Login successful! Proceeding to WordPress discovery...")
             st.rerun()
 
 def show_main_app():
@@ -670,27 +675,27 @@ def show_main_app():
     
     # Sidebar with session info and controls
     with st.sidebar:
-        st.markdown("### 🔐 Session Info")
+        st.markdown("### Session Info")
         creds = st.session_state.credentials
         st.write(f"**Host:** {creds['host']}")
         st.write(f"**User:** {creds['user']}")
         
-        st.markdown("### 🔧 Controls")
+        st.markdown("### Controls")
         st.session_state.debug_mode = st.checkbox("Debug Mode", value=st.session_state.get('debug_mode', False))
         
         if 'working_softaculous_config' in st.session_state:
-            st.markdown("### ✅ Working API Config")
+            st.markdown("### Working API Config")
             config = st.session_state.working_softaculous_config
             st.code(f"Path: {config['path']}\nFormat: {config['format']}\nAuth: {config['auth_method']}")
         
         st.markdown("---")
-        if st.button("🚪 Logout"):
+        if st.button("Logout"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
     
     # Main content
-    st.header("🔍 WordPress Site Discovery")
+    st.header("WordPress Site Discovery")
     
     # Initialize installations
     if 'installations' not in st.session_state:
@@ -700,15 +705,15 @@ def show_main_app():
     if not st.session_state.installations:
         
         # Automatic discovery
-        st.subheader("🤖 Automatic Discovery")
+        st.subheader("Automatic Discovery")
         
-        if st.button("🔍 Discover WordPress Sites", type="primary"):
-            with st.spinner("🔍 Discovering WordPress installations..."):
+        if st.button("Discover WordPress Sites", type="primary"):
+            with st.spinner("Discovering WordPress installations..."):
                 installations, error = discover_wordpress_installations()
                 
                 if installations:
                     st.session_state.installations = installations
-                    st.success(f"✅ Found {len(installations)} WordPress installations!")
+                    st.success(f"Found {len(installations)} WordPress installations!")
                     
                     # Show discovered sites
                     for installation in installations:
@@ -717,8 +722,8 @@ def show_main_app():
                     st.rerun()
                 
                 else:
-                    st.warning(f"⚠️ Automatic discovery failed: {error}")
-                    st.info("💡 Don't worry! You can add WordPress sites manually below.")
+                    st.warning(f"Automatic discovery failed: {error}")
+                    st.info("Don't worry! You can add WordPress sites manually below.")
         
         st.markdown("---")
         
@@ -732,7 +737,7 @@ def show_main_app():
     
     else:
         # Show discovered/manual sites
-        st.subheader(f"📋 WordPress Sites ({len(st.session_state.installations)})")
+        st.subheader(f"WordPress Sites ({len(st.session_state.installations)})")
         
         for installation in st.session_state.installations:
             with st.expander(f"🌐 {installation['display_name']}"):
@@ -746,31 +751,31 @@ def show_main_app():
                 with col2:
                     st.write(f"**User:** {installation['user']}")
                     if installation.get('manual_entry'):
-                        st.write("📝 **Manually Added**")
+                        st.write("**Manually Added**")
                     
                     # Test URL
                     test_url = f"https://{installation['domain']}{installation['path']}wp-admin/"
-                    st.markdown(f"[🔗 Open WordPress Admin]({test_url})")
+                    st.markdown(f"[Open WordPress Admin]({test_url})")
         
         # Management options
-        st.subheader("🛠️ Management Options")
-        st.info("🚧 **WordPress management features** (plugin updates, backups, etc.) will be available once we resolve the Softaculous API connectivity.")
+        st.subheader("Management Options")
+        st.info("WordPress management features (plugin updates, backups, etc.) will be available once we resolve the Softaculous API connectivity.")
         
         # Export options
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("📊 Export Site List (CSV)"):
+            if st.button("Export Site List (CSV)"):
                 csv_data = create_csv_export(st.session_state.installations)
                 st.download_button(
-                    label="📥 Download CSV",
+                    label="Download CSV",
                     data=csv_data,
                     file_name=f"wordpress_sites_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv"
                 )
         
         with col2:
-            if st.button("🗑️ Clear All Sites"):
+            if st.button("Clear All Sites"):
                 st.session_state.installations = []
                 if 'manual_installations' in st.session_state:
                     del st.session_state.manual_installations
@@ -817,13 +822,13 @@ def main():
         ).hexdigest()[:8]
     
     # Header
-    st.title("🔧 A2 Hosting WordPress Manager")
+    st.title("A2 Hosting WordPress Manager")
     st.markdown("### Production-Ready WordPress Management Tool")
     
     # Instructions
-    with st.expander("📖 Quick Start Guide"):
+    with st.expander("Quick Start Guide"):
         st.markdown("""
-        ## 🚀 How to Use This Tool
+        ## How to Use This Tool
         
         ### **Step 1: Login**
         - Enter your **cPanel credentials** (same as cPanel login)
@@ -840,7 +845,7 @@ def main():
         - Export site lists for documentation
         - Access WordPress admin panels directly
         
-        ## ✨ **Key Features**
+        ## **Key Features**
         - **Smart Discovery**: Tests multiple API methods
         - **Manual Entry**: Add sites when automation fails  
         - **Debug Mode**: Detailed diagnostic information
