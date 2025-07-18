@@ -1,5 +1,5 @@
-# A2 Hosting WordPress Manager - Requirements for Streamlit Cloud Deployment
-# Compatible with Streamlit Cloud hosting environment
+# A2 Hosting WordPress Manager - Clean Requirements File
+# Compatible with Streamlit Cloud deployment
 
 # Core Streamlit Framework
 streamlit>=1.28.0
@@ -9,94 +9,14 @@ requests>=2.31.0
 urllib3>=1.26.0
 certifi>=2023.7.22
 
-# PHP Data Handling for Softaculous API
+# PHP Data Handling for Softaculous API (optional - graceful fallback if missing)
 phpserialize>=1.3
 
 # Security and SSL Certificate Handling
-# (Important for A2 Hosting's SSL certificates)
 pyOpenSSL>=23.2.0
 
-# Additional Dependencies for Robust Operation
-# Date and time utilities (usually built-in but specified for completeness)
+# Additional Dependencies
 python-dateutil>=2.8.2
 
-# File compression and archive handling
-# (These are usually built-in but ensuring compatibility)
-# zipfile - built-in
-# tarfile - built-in
-# shutil - built-in
-
-# CSV and JSON handling
-# (Built-in modules but ensuring compatibility)
-# csv - built-in
-# json - built-in
-
-# Path handling
-# pathlib - built-in (Python 3.4+)
-
-# Threading and async support
-# threading - built-in
-# asyncio - built-in
-
-# Logging and monitoring
-# logging - built-in
-# hashlib - built-in
-# socket - built-in
-
-# I/O operations
-# io - built-in
-# os - built-in
-# tempfile - built-in
-
-# Optional: Enhanced error handling and debugging
-# (Uncomment if needed for production debugging)
-# sentry-sdk>=1.32.0
-
-# Optional: Performance monitoring
-# (Uncomment if you want to monitor app performance)
-# psutil>=5.9.0
-
-# Optional: Environment variable management
-# (Uncomment if you want to use .env files)
-# python-dotenv>=1.0.0
-
-# Optional: Enhanced authentication
-# (Uncomment if you want additional auth features)
-# streamlit-authenticator>=0.2.3
-
-# Optional: Enhanced UI components
-# (Uncomment for additional UI features)
-# streamlit-option-menu>=0.3.6
-# streamlit-aggrid>=0.3.4
-
-# Development and Testing Dependencies
-# (Comment out for production deployment)
-# pytest>=7.4.0
-# black>=23.0.0
-# flake8>=6.0.0
-
-# Production Deployment Notes:
-# - All built-in Python modules are automatically available
-# - Streamlit Cloud handles most system dependencies
-# - SSL certificates are managed by the hosting environment
-# - File system operations are limited to temporary directories
-# - Network access is available for API calls
-
-# Version Compatibility Notes:
-# - Python 3.8+ required (Streamlit Cloud standard)
-# - All versions specified are minimum requirements
-# - Higher versions are generally compatible
-
-# A2 Hosting Specific Notes:
-# - phpserialize is essential for Softaculous API communication
-# - requests with SSL support is crucial for A2's certificates
-# - urllib3 and certifi provide robust SSL handling
-
-# Streamlit Cloud Optimization:
-# - Minimal dependencies for faster deployment
-# - Only essential packages included
-# - Built-in modules leveraged where possible
-# - Compatible with Streamlit Cloud's Python environment
-
-phpserialize>=1.3
-xml
+# Note: xml.etree.ElementTree is built-in to Python - no need to install
+# Note: All other modules (json, csv, io, os, etc.) are built-in
