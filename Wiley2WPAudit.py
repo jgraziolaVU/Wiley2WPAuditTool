@@ -1339,18 +1339,6 @@ else:
                         st.success(f"✅ Loaded {len(plugins)} plugins")
         
         with col2:
-            if st.button("🔄 Update All Plugins for This Domain"):
-                with st.spinner("Updating all plugins..."):
-                    result, error = update_plugin(current_domain['insid'])
-                    if error:
-                        st.error(f"Update failed: {error}")
-                        handle_a2_hosting_errors(error)
-                    else:
-                        st.success("✅ Backup created successfully!")
-                        if result:
-                            st.json(result)
-        
-        with col2:
             if st.button("📋 List All Backups"):
                 with st.spinner("Loading backups from A2 Hosting..."):
                     backups, error = list_backups()
@@ -1839,7 +1827,14 @@ else:
     st.caption("📋 **Complete Activity Tracking & Monitoring**")
     st.caption("🔗 Uses A2 Hosting's Softaculous WordPress Manager API")
     st.caption("💾 **Audit logs stored in ./logs/ directory**")
-    st.caption("📞 **A2 Hosting Support:** support@a2hosting.com")✅ All plugins updated successfully!")
+    st.caption("📞 **A2 Hosting Support:** support@a2hosting.com")🔄 Update All Plugins for This Domain"):
+                with st.spinner("Updating all plugins..."):
+                    result, error = update_plugin(current_domain['insid'])
+                    if error:
+                        st.error(f"Update failed: {error}")
+                        handle_a2_hosting_errors(error)
+                    else:
+                        st.success("✅ All plugins updated successfully!")
                         if result:
                             st.json(result)
         
@@ -1939,4 +1934,9 @@ else:
                         st.error(f"Backup failed: {error}")
                         handle_a2_hosting_errors(error)
                     else:
-                        st.success("
+                        st.success("✅ Backup created successfully!")
+                        if result:
+                            st.json(result)
+        
+        with col2:
+            if st.button("
