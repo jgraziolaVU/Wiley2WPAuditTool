@@ -234,13 +234,14 @@ audit_logger = AuditLogger()
 
 # --- A2 Hosting Specific Functions ---
 def detect_a2_hosting_server(host):
-    """Detect if this is an A2 Hosting server and provide helpful info"""
+    """Detect if this is an A2 Hosting server (including reseller accounts)"""
     a2_indicators = [
         'a2hosting.com',
         'server.a2hosting.com',
         'nl1-ss',
         'sg',
-        'mi'
+        'mi',
+        'clasit.org',  # CLAS IT reseller
     ]
     
     for indicator in a2_indicators:
@@ -269,24 +270,31 @@ def get_a2_server_info(host):
     elif 'server.a2hosting.com' in host.lower():
         server_info['location'] = 'USA (Primary)'
         server_info['server_type'] = 'VPS/Dedicated'
+    elif 'clasit.org' in host.lower():
+        server_info['location'] = 'USA (A2 Hosting Reseller - CLAS IT)'
+        server_info['server_type'] = 'Reseller Account'
+        server_info['reseller'] = 'CLAS IT'
     
     return server_info
 
 def validate_a2_credentials(host, user, password, port):
-    """Validate A2 Hosting specific credential format"""
+    """Validate A2 Hosting credentials (including reseller accounts)"""
     errors = []
     
-    # A2 Hosting host validation
-    if not host.endswith('.a2hosting.com') and 'server.a2hosting.com' not in host:
-        errors.append("Host should be an A2 Hosting server (*.a2hosting.com)")
+    # A2 Hosting (including resellers) host validation
+    a2_domains = ['.a2hosting.com', 'server.a2hosting.com', 'clasit.org']
+    is_a2_host = any(domain in host.lower() for domain in a2_domains)
+    
+    if not is_a2_host:
+        errors.append("Host should be an A2 Hosting server (*.a2hosting.com) or A2 reseller (e.g., clasit.org)")
     
     # A2 typically has specific username formats
     if len(user) < 3:
         errors.append("A2 Hosting usernames are typically at least 3 characters")
     
     # A2 password requirements
-    if len(password) < 8:
-        errors.append("A2 Hosting passwords should be at least 8 characters")
+    if len(password) < 6:
+        errors.append("A2 Hosting passwords should be at least 6 characters")
     
     return errors
 
@@ -890,12 +898,12 @@ def show_a2_hosting_info():
         """)
 
 def show_a2_hosting_login_screen():
-    """Enhanced login screen with A2 Hosting specific features"""
+    """Enhanced login screen with A2 Hosting (including reseller) support"""
     st.title("🔐 A2 Hosting WordPress Manager")
     st.markdown("### Connect to your A2 Hosting cPanel account")
     
     # Add A2 Hosting branding/info
-    st.info("💡 **A2 Hosting Users**: Use your cPanel credentials (same as what you use to log into cPanel)")
+    st.info("💡 **A2 Hosting Users**: Use your cPanel credentials (works with direct A2 accounts and reseller accounts)")
     
     with st.form("a2_login_form"):
         st.subheader("📋 A2 Hosting cPanel Credentials")
@@ -906,7 +914,8 @@ def show_a2_hosting_login_screen():
             **Your A2 Hosting credentials:**
             
             1. **cPanel Host**: Found in your A2 Hosting welcome email
-               - Format: `server.a2hosting.com` or `nl1-ss##.a2hosting.com`
+               - **Direct A2**: `server.a2hosting.com` or `nl1-ss##.a2hosting.com`
+               - **Reseller Accounts**: Custom domains like `server.clasit.org`
                - Check your hosting account dashboard for the exact server name
             
             2. **cPanel Username**: Usually your domain name or chosen username
@@ -929,17 +938,20 @@ def show_a2_hosting_login_screen():
             # Smart host detection
             host = st.text_input(
                 "cPanel Host", 
-                placeholder="server.a2hosting.com or nl1-ss##.a2hosting.com",
+                placeholder="server.clasit.org or server.a2hosting.com",
                 help="Your A2 Hosting server name (found in welcome email)"
             )
             
-            # Host validation for A2 Hosting
+            # Host validation for A2 Hosting (including resellers)
             if host:
                 is_a2, server_info = detect_a2_hosting_server(host)
                 if is_a2:
-                    st.success(f"✅ A2 Hosting server detected: {server_info['location']}")
+                    if 'reseller' in server_info:
+                        st.success(f"✅ A2 Hosting Reseller detected: {server_info['reseller']} ({server_info['location']})")
+                    else:
+                        st.success(f"✅ A2 Hosting server detected: {server_info['location']}")
                 else:
-                    st.warning("⚠️ This doesn't look like an A2 Hosting server")
+                    st.warning("⚠️ This doesn't look like an A2 Hosting server or reseller")
             
             user = st.text_input(
                 "cPanel Username", 
@@ -991,7 +1003,7 @@ def show_a2_hosting_login_screen():
                 st.error("❌ Please fill in all A2 Hosting cPanel credentials")
                 return
             
-            # Validate A2 Hosting format
+            # Validate A2 Hosting format (including resellers)
             validation_errors = validate_a2_credentials(host, user, password, port)
             if validation_errors:
                 for error in validation_errors:
@@ -1025,11 +1037,12 @@ def show_a2_hosting_login_screen():
                     
                     1. **Double-check credentials**: Verify in your A2 Hosting client area
                     2. **Server name**: Make sure you're using the correct server name
-                    3. **Port**: Try port 2082 if 2083 doesn't work
-                    4. **Password**: Try resetting your cPanel password
-                    5. **IP restrictions**: A2 may block certain IPs
+                    3. **Reseller accounts**: Use your reseller's custom domain (e.g., server.clasit.org)
+                    4. **Port**: Try port 2082 if 2083 doesn't work
+                    5. **Password**: Try resetting your cPanel password
+                    6. **IP restrictions**: A2 may block certain IPs
                     
-                    **Still having issues?** Contact A2 Hosting support
+                    **Still having issues?** Contact A2 Hosting support or your reseller
                     """)
 
 def show_main_app():
@@ -1168,7 +1181,7 @@ st.set_page_config(page_title="A2 Hosting WordPress Manager", layout="wide")
 
 # Always show the title and instructions at the top
 st.title("🔧 A2 Hosting WordPress Manager")
-st.markdown("### Enhanced WordPress Management for A2 Hosting Customers")
+st.markdown("### Enhanced WordPress Management for A2 Hosting (Including Resellers)")
 
 # Instructions Section - Always visible at the top
 with st.expander("📖 Instructions - A2 Hosting WordPress Management Guide! 🧙‍♂️", expanded=False):
@@ -1341,7 +1354,7 @@ else:
         st.info("ℹ️ No WordPress installations found. Please install WordPress via Softaculous in cPanel first.")
 
     st.markdown("---")
-    st.caption("🏢 **Optimized for A2 Hosting** - Developed for A2 Hosting WordPress Management")
+    st.caption("🏢 **Optimized for A2 Hosting** - Works with direct A2 accounts and reseller accounts")
     st.caption("✨ **Enhanced with Comprehensive Audit Logging**")
     st.caption("🔐 **Security & Compliance Ready**")
     st.caption("📋 **Complete Activity Tracking & Monitoring**")
